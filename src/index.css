@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+    --font-sans: "Inter", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    --font-mono: "JetBrains Mono", monospace;
+    
+    --color-bg: #F0F0EE;
+    --color-sidebar-bg: #1A1A1A;
+    --color-accent: #D4AF37;
+    --color-ink: #141414;
+    --color-line: #D1D1CF;
+
+    /* shadcn compatibility */
+    --color-background: #F0F0EE;
+    --color-foreground: #141414;
+    --color-card: #FFFFFF;
+    --color-card-foreground: #141414;
+    --color-popover: #FFFFFF;
+    --color-popover-foreground: #141414;
+    --color-primary: #141414;
+    --color-primary-foreground: #FFFFFF;
+    --color-secondary: #FFFFFF;
+    --color-secondary-foreground: #141414;
+    --color-muted: #F9F9F8;
+    --color-muted-foreground: #666666;
+    --color-destructive: oklch(0.577 0.245 27.325);
+    --color-border: #D1D1CF;
+    --color-input: #D1D1CF;
+    --color-ring: #D4AF37;
+    
+    --radius-sm: 0px;
+    --radius-md: 0px;
+    --radius-lg: 0px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+  }
+}
+
+/* Force ScrollArea scrollbars to be visible and prominent */
+[data-slot="scroll-area-scrollbar"] {
+  opacity: 1 !important;
+  visibility: visible !important;
+  background-color: rgba(226, 232, 240, 1) !important; /* light slate track */
+  width: 12px !important;
+  border-left: 1px solid #D1D1CF !important;
+}
+
+[data-slot="scroll-area-thumb"] {
+  opacity: 1 !important;
+  visibility: visible !important;
+  background-color: #64748b !important; /* slate-500 thumb */
+  border: 2px solid white !important;
+}
+
+[data-slot="scroll-area-thumb"]:hover {
+  background-color: #334155 !important; /* slate-700 hover */
+}

@@ -1,0 +1,74 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: exams
+// Document ID: auto-generated
+// Fields:
+//   - round: string (required) - Exam round number
+//   - status: string (required, 'draft'|'published') - Status
+//   - createdAt: timestamp (required)
+//
+// Collection: questions
+// Document ID: auto-generated
+// Fields:
+//   - examId: string (required) - Reference to exams collection
+//   - type: string (required, 'general'|'advanced') - Exam type
+//   - number: number (required) - Question number
+//   - era: string - Historical era
+//   - difficulty: string ('상'|'중'|'하') - Difficulty
+//   - title: string (required) - Question title
+//   - keywords: array of strings - Keywords
+//   - imageUrl: string - Image URL
+//   - answer: number (required, 1-5) - Correct answer
+//   - score: number - Points
+//   - correctRate: number - Correct rate %
+//   - explanation: string - Explanation
+//   - category: string - Category/Type
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "toddkim@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    function isValidExam(data) {
+      return data.keys().hasAll(['round', 'status', 'createdAt']) &&
+             data.round is string && data.round.size() > 0 && data.round.size() < 20 &&
+             data.status in ['draft', 'published'];
+    }
+
+    function isValidQuestion(data) {
+      return data.keys().hasAll(['examId', 'type', 'number', 'title', 'answer']) &&
+             data.examId is string &&
+             data.type in ['general', 'advanced'] &&
+             data.number is number && data.number > 0 && data.number <= 100 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 1000 &&
+             data.answer is number && data.answer >= 1 && data.answer <= 5;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /exams/{examId} {
+      allow read, write: if true;
+    }
+
+    match /questions/{questionId} {
+      allow read, write: if true;
+    }
+  }
+}

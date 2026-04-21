@@ -1,0 +1,46 @@
+{
+  "entities": {
+    "Exam": {
+      "title": "Exam",
+      "description": "Represents a specific exam round (e.g., 76th)",
+      "type": "object",
+      "properties": {
+        "round": { "type": "string", "description": "Exam round number" },
+        "status": { "type": "string", "enum": ["draft", "published"], "description": "Status of the exam" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["round", "status"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "A single exam question",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string", "description": "Reference to the Exam" },
+        "type": { "type": "string", "enum": ["general", "advanced"], "description": "Exam type (일반/심화)" },
+        "number": { "type": "number", "description": "Question number" },
+        "era": { "type": "string", "description": "Historical era (시대)" },
+        "difficulty": { "type": "string", "enum": ["상", "중", "하"], "description": "Difficulty level" },
+        "title": { "type": "string", "description": "Question title/subject" },
+        "keywords": { "type": "array", "items": { "type": "string" }, "description": "Keywords" },
+        "imageUrl": { "type": "string", "description": "Image URL for the question" },
+        "answer": { "type": "number", "description": "Correct answer (1-5)" },
+        "score": { "type": "number", "description": "Score/Points" },
+        "correctRate": { "type": "number", "description": "Correct answer rate percentage" },
+        "explanation": { "type": "string", "description": "Question explanation" },
+        "category": { "type": "string", "description": "Question category/type (유형)" }
+      },
+      "required": ["examId", "type", "number", "title", "answer"]
+    }
+  },
+  "firestore": {
+    "/exams/{examId}": {
+      "schema": "Exam",
+      "description": "Collection of exam rounds"
+    },
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Collection of all questions"
+    }
+  }
+}
