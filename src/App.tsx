@@ -848,7 +848,7 @@ export default function App() {
                 </div>
               )}
               <div className="flex items-center gap-2">
-                <Label className="text-xs font-bold uppercase text-slate-500">회차:</Label>
+                <span className="text-xs font-bold uppercase text-slate-500">회차:</span>
                 <Select 
                   value={selectedExamId || ""} 
                   onValueChange={(val) => setSelectedExamId(val)}
@@ -943,18 +943,18 @@ export default function App() {
                         >
                           <div className="col-span-2 p-2.5 font-mono text-[11px]">#{String(num).padStart(2, '0')}</div>
                           <div className="col-span-2 p-2.5">
-                            <span className="text-[10px] px-1.5 py-0.5 bg-[#EEE] rounded-sm">{q?.era || '-'}</span>
+                            <span className="text-xs px-2 py-0.5 bg-[#EEE] rounded-sm">{q?.era || '-'}</span>
                           </div>
                           <div className="col-span-2 p-2.5">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-sm ${q?.difficulty === '상' ? 'bg-[#FFE5E5] text-[#D00]' : 'bg-[#EEE]'}`}>
+                            <span className={`text-xs px-2 py-0.5 rounded-sm ${q?.difficulty === '상' ? 'bg-[#FFE5E5] text-[#D00]' : 'bg-[#EEE]'}`}>
                               {q?.difficulty || '-'}
                             </span>
                           </div>
-                          <div className="col-span-4 p-2.5 truncate">
+                          <div className="col-span-4 p-2.5 truncate text-sm">
                             {q?.title || <span className="text-slate-300 italic">문항을 입력하세요</span>}
                           </div>
                           <div className="col-span-2 p-2.5 flex justify-end">
-                            <Button variant="outline" size="sm" className="h-5 text-[9px] rounded-none border-[#141414] px-1.5">
+                            <Button variant="outline" size="sm" className="h-7 text-xs rounded-none border-[#141414] px-2">
                               {q ? '수정' : '+ 입력'}
                             </Button>
                           </div>
