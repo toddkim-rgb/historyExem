@@ -27,6 +27,11 @@ import { Exam, Question } from '../types';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+
 interface StatsPageProps {
   exams: Exam[];
   selectedExamId: string;
@@ -51,19 +56,19 @@ const seededRandom = (seed: string) => {
 
 export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, questions, onExamChange, onSelectQuestion }) => {
   const [searchKeyword, setSearchKeyword] = useState('');
-  const [searchLevel, setSearchLevel] = useState<string>('all');
-  const [searchEra, setSearchEra] = useState<string>('all');
-  const [searchCategory, setSearchCategory] = useState<string>('all');
-  const [searchCorrectRate, setSearchCorrectRate] = useState<string>('all');
+  const [searchLevel, setSearchLevel] = useState<string>('전체');
+  const [searchEra, setSearchEra] = useState<string[]>([]);
+  const [searchCategory, setSearchCategory] = useState<string[]>([]);
+  const [searchCorrectRate, setSearchCorrectRate] = useState<string>('전체');
   const [showDetails, setShowDetails] = useState(false);
 
   // 실제 검색에 적용될 상태 (버튼 클릭 시 업데이트)
   const [appliedFilters, setAppliedFilters] = useState({
     keyword: '',
-    level: 'all',
-    era: 'all',
-    category: 'all',
-    correctRate: 'all'
+    level: '전체',
+    era: [] as string[],
+    category: [] as string[],
+    correctRate: '전체'
   });
 
   const handleSearch = () => {
@@ -79,16 +84,16 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
 
   const handleReset = () => {
     setSearchKeyword('');
-    setSearchLevel('all');
-    setSearchEra('all');
-    setSearchCategory('all');
-    setSearchCorrectRate('all');
+    setSearchLevel('전체');
+    setSearchEra([]);
+    setSearchCategory([]);
+    setSearchCorrectRate('전체');
     setAppliedFilters({
       keyword: '',
-      level: 'all',
-      era: 'all',
-      category: 'all',
-      correctRate: 'all'
+      level: '전체',
+      era: [],
+      category: [],
+      correctRate: '전체'
     });
   };
 
@@ -110,12 +115,12 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
         q.title.toLowerCase().includes(appliedFilters.keyword.toLowerCase()) || 
         q.keywords.some(k => k.toLowerCase().includes(appliedFilters.keyword.toLowerCase()));
       
-      const matchLevel = appliedFilters.level === 'all' || q.type === appliedFilters.level;
-      const matchEra = appliedFilters.era === 'all' || q.era === appliedFilters.era;
-      const matchCategory = appliedFilters.category === 'all' || q.category === appliedFilters.category;
+      const matchLevel = appliedFilters.level === '전체' || q.type === appliedFilters.level;
+      const matchEra = appliedFilters.era.length === 0 || appliedFilters.era.includes(q.era);
+      const matchCategory = appliedFilters.category.length === 0 || appliedFilters.category.includes(q.category);
       
       let matchRate = true;
-      if (appliedFilters.correctRate !== 'all') {
+      if (appliedFilters.correctRate !== '전체') {
         const rate = q.correctRate;
         if (appliedFilters.correctRate === 'high') matchRate = rate >= 80;
         else if (appliedFilters.correctRate === 'mid') matchRate = rate >= 50 && rate < 80;
@@ -260,6 +265,29 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
     };
   }, [selectedExamId, questions]);
 
+  const filteredStats = useMemo(() => {
+    if (filteredQuestions.length === 0) return null;
+
+    const difficultyDist = ['상', '중', '하'].map(diff => ({
+      name: diff,
+      value: filteredQuestions.filter(q => q.difficulty === diff).length
+    }));
+
+    const eraDist = eras.map(era => ({
+      name: era,
+      value: filteredQuestions.filter(q => q.era === era).length
+    })).filter(item => item.value > 0);
+
+    const typeDist = categories.map(cat => ({
+      name: cat,
+      value: filteredQuestions.filter(q => q.category === cat).length
+    })).filter(item => item.value > 0);
+
+    const avgCorr = Math.round(filteredQuestions.reduce((acc, curr) => acc + curr.correctRate, 0) / filteredQuestions.length);
+
+    return { difficultyDist, eraDist, typeDist, avgCorr };
+  }, [filteredQuestions]);
+
   return (
     <div className="flex-1 flex flex-col gap-2 h-full overflow-hidden pb-2">
       <div className="flex items-center justify-start gap-4 shrink-0 px-1">
@@ -290,10 +318,10 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
       </div>
 
       <div className="flex-1 overflow-y-auto pr-6">
-        <div className="space-y-4 pb-6">
+        <div className="space-y-2 pb-6">
           {/* 조건 검색 영역 */}
-          <Card className="rounded-none border-0 shadow-sm bg-white mb-4">
-            <CardHeader className="py-2 px-4 border-b border-slate-100 bg-slate-50/50">
+          <Card className="rounded-none border-0 shadow-sm bg-white">
+            <CardHeader className="py-1.5 px-4 border-b border-slate-100 bg-slate-50/50">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-[11px] font-bold flex items-center gap-2">
                   <Search className="w-3 h-3 text-slate-500" />
@@ -312,7 +340,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                 )}
               </div>
             </CardHeader>
-            <CardContent className="p-3">
+            <CardContent className="py-2 px-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="flex-1 min-w-[200px] space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
@@ -334,35 +362,113 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                       <SelectValue placeholder="전체" />
                     </SelectTrigger>
                     <SelectContent className="rounded-none">
-                      <SelectItem value="all">전체</SelectItem>
+                      <SelectItem value="전체">전체</SelectItem>
                       <SelectItem value="advanced">심화</SelectItem>
                       <SelectItem value="general">기본</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="w-28 space-y-1">
+                <div className="w-32 space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">시대</label>
-                  <Select value={searchEra} onValueChange={setSearchEra}>
-                    <SelectTrigger className="w-full h-8 rounded-none border-slate-200 text-[11px]">
-                      <SelectValue placeholder="전체" />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-none">
-                      <SelectItem value="all">전체</SelectItem>
-                      {eras.map(e => <SelectItem key={`era-opt-${e}`} value={e}>{e}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        className="w-full h-8 rounded-none border-slate-200 text-[11px] justify-between font-normal px-3 bg-white"
+                      >
+                        <span className="truncate">
+                          {searchEra.length === 0 
+                            ? "전체" 
+                            : searchEra.length === eras.length 
+                              ? "전체" 
+                              : `${searchEra[0]}${searchEra.length > 1 ? ` 외 ${searchEra.length - 1}` : ""}`}
+                        </span>
+                        <ChevronDown className="w-3 h-3 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[180px] p-0 rounded-none shadow-lg border-slate-200" align="start">
+                      <ScrollArea className="h-48">
+                        <div className="p-2 space-y-1 bg-white">
+                          <div 
+                            className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                            onClick={() => {
+                              if (searchEra.length === eras.length) setSearchEra([]);
+                              else setSearchEra([...eras]);
+                            }}
+                          >
+                            <Checkbox checked={searchEra.length === eras.length} />
+                            <label className="text-[11px] font-bold leading-none cursor-pointer">전체 선택</label>
+                          </div>
+                          <Separator className="my-1 bg-slate-100" />
+                          {eras.map((era) => (
+                            <div 
+                              key={era}
+                              className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                              onClick={() => {
+                                const isSelected = searchEra.includes(era);
+                                if (isSelected) setSearchEra(searchEra.filter(s => s !== era));
+                                else setSearchEra([...searchEra, era]);
+                              }}
+                            >
+                              <Checkbox checked={searchEra.includes(era)} />
+                              <label className="text-[11px] font-medium leading-none cursor-pointer">{era}</label>
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </PopoverContent>
+                  </Popover>
                 </div>
-                <div className="w-40 space-y-1">
+                <div className="w-44 space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">문항유형</label>
-                  <Select value={searchCategory} onValueChange={setSearchCategory}>
-                    <SelectTrigger className="w-full h-8 rounded-none border-slate-200 text-[11px]">
-                      <SelectValue placeholder="전체" />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-none">
-                      <SelectItem value="all">전체</SelectItem>
-                      {categories.map(c => <SelectItem key={`cat-opt-${c}`} value={c}>{c}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        className="w-full h-8 rounded-none border-slate-200 text-[11px] justify-between font-normal px-3 bg-white"
+                      >
+                        <span className="truncate">
+                          {searchCategory.length === 0 
+                            ? "전체" 
+                            : searchCategory.length === categories.length 
+                              ? "전체" 
+                              : `${searchCategory[0]}${searchCategory.length > 1 ? ` 외 ${searchCategory.length - 1}` : ""}`}
+                        </span>
+                        <ChevronDown className="w-3 h-3 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[240px] p-0 rounded-none shadow-lg border-slate-200" align="start">
+                      <ScrollArea className="h-56">
+                        <div className="p-2 space-y-1 bg-white">
+                          <div 
+                            className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                            onClick={() => {
+                              if (searchCategory.length === categories.length) setSearchCategory([]);
+                              else setSearchCategory([...categories]);
+                            }}
+                          >
+                            <Checkbox checked={searchCategory.length === categories.length} />
+                            <label className="text-[11px] font-bold leading-none cursor-pointer">전체 선택</label>
+                          </div>
+                          <Separator className="my-1 bg-slate-100" />
+                          {categories.map((cat) => (
+                            <div 
+                              key={cat}
+                              className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                              onClick={() => {
+                                const isSelected = searchCategory.includes(cat);
+                                if (isSelected) setSearchCategory(searchCategory.filter(s => s !== cat));
+                                else setSearchCategory([...searchCategory, cat]);
+                              }}
+                            >
+                              <Checkbox checked={searchCategory.includes(cat)} />
+                              <label className="text-[11px] font-medium leading-none cursor-pointer">{cat}</label>
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="w-32 space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">정답률</label>
@@ -371,7 +477,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                       <SelectValue placeholder="전체" />
                     </SelectTrigger>
                     <SelectContent className="rounded-none">
-                      <SelectItem value="all">전체</SelectItem>
+                      <SelectItem value="전체">전체</SelectItem>
                       <SelectItem value="high">80% 이상</SelectItem>
                       <SelectItem value="mid">50%~80%</SelectItem>
                       <SelectItem value="low">50% 미만</SelectItem>
@@ -468,10 +574,10 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   <CardContent>
                     <div className="h-[280px] w-full">
                       <ResponsiveContainer width="100%" height="100%" key={`era-container-${selectedExamId}`}>
-                      <BarChart id={`era_stats_chart_${selectedExamId}`} data={statsData.eraData}>
+                        <BarChart id={`era-stats-${selectedExamId}`} data={statsData.eraData}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#EEE" />
-                          <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} />
-                          <YAxis fontSize={11} tickLine={false} axisLine={false} unit="%" />
+                          <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} id={`x-axis-era-${selectedExamId}`} />
+                          <YAxis fontSize={11} tickLine={false} axisLine={false} unit="%" id={`y-axis-era-${selectedExamId}`} />
                           <Tooltip 
                             contentStyle={{ borderRadius: '0', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '11px' }}
                           />
@@ -496,10 +602,10 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   <CardContent>
                     <div className="h-[280px] w-full">
                       <ResponsiveContainer width="100%" height="100%" key={`type-container-${selectedExamId}`}>
-                      <LineChart id={`type_stats_chart_${selectedExamId}`} data={statsData.typeData}>
+                        <LineChart id={`type-stats-${selectedExamId}`} data={statsData.typeData}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#EEE" />
-                          <XAxis dataKey="name" fontSize={9} tickLine={false} axisLine={false} />
-                          <YAxis domain={[0, 100]} fontSize={11} tickLine={false} axisLine={false} unit="%" />
+                          <XAxis dataKey="name" fontSize={9} tickLine={false} axisLine={false} id={`x-axis-type-${selectedExamId}`} />
+                          <YAxis domain={[0, 100]} fontSize={11} tickLine={false} axisLine={false} unit="%" id={`y-axis-type-${selectedExamId}`} />
                           <Tooltip 
                             contentStyle={{ borderRadius: '0', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '11px' }}
                           />
@@ -529,7 +635,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                       <div className="h-[160px]">
                         <p className="text-[10px] font-bold text-center mb-1 text-slate-500 uppercase tracking-tighter">난이도 구성비</p>
                         <ResponsiveContainer width="100%" height="100%" key={`pie-container-${selectedExamId}`}>
-                          <PieChart id={`diff_dist_chart_${selectedExamId}`}>
+                          <PieChart id={`pie-stats-${selectedExamId}`}>
                             <Pie
                               data={statsData.difficultyDistribution}
                               cx="50%"
@@ -558,10 +664,10 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                       <div className="h-[160px]">
                         <p className="text-[10px] font-bold text-center mb-1 text-slate-500 uppercase tracking-tighter">그룹별 정답률</p>
                         <ResponsiveContainer width="100%" height="100%" key={`corr-container-${selectedExamId}`}>
-                          <ComposedChart id={`diff_corr_chart_${selectedExamId}`} data={statsData.diffCorrData}>
+                          <ComposedChart id={`composed-stats-${selectedExamId}`} data={statsData.diffCorrData}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                            <XAxis dataKey="name" fontSize={9} tickLine={false} axisLine={false} />
-                            <YAxis fontSize={9} tickLine={false} axisLine={false} domain={[0, 100]} unit="%" />
+                            <XAxis dataKey="name" fontSize={9} tickLine={false} axisLine={false} id={`x-axis-corr-${selectedExamId}`} />
+                            <YAxis fontSize={9} tickLine={false} axisLine={false} domain={[0, 100]} unit="%" id={`y-axis-corr-${selectedExamId}`} />
                             <Tooltip contentStyle={{ fontSize: '10px', borderRadius: '0' }} />
                             <Bar dataKey="평균정답률" barSize={15} fill="#1E293B" />
                             <Area type="monotone" dataKey="평균정답률" fill="#D4AF37" fillOpacity={0.1} stroke="#D4AF37" strokeWidth={1} />
@@ -588,7 +694,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   <CardContent className="flex justify-center pt-2">
                     <div className="h-[220px] w-full">
                       <ResponsiveContainer width="100%" height="100%" key={`radar-container-${selectedExamId}`}>
-                        <RadarChart id={`radar_stats_chart_${selectedExamId}`} cx="50%" cy="50%" outerRadius="70%" data={statsData.typeData}>
+                        <RadarChart id={`radar-stats-${selectedExamId}`} cx="50%" cy="50%" outerRadius="70%" data={statsData.typeData}>
                           <PolarGrid stroke="#E2E8F0" />
                           <PolarAngleAxis dataKey="name" fontSize={9} />
                           <PolarRadiusAxis angle={30} domain={[0, 5]} fontSize={8} />
@@ -706,6 +812,97 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   </div>
                 </CardContent>
               </Card>
+
+              {/* 검색 결과 통계 요약 (필터링된 데이터 기반) */}
+              {filteredStats && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                  <Card className="rounded-none border-0 bg-white shadow-sm overflow-hidden">
+                    <CardHeader className="border-b border-slate-100 bg-slate-50/50 py-2 px-4">
+                      <CardTitle className="text-[10px] font-bold flex items-center gap-2">
+                        <PieChartIcon className="w-3 h-3 text-indigo-500" />
+                        결과 내 난이도 분포
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-4 flex flex-col items-center">
+                      <div className="h-[140px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart id="filter-diff-pie">
+                            <Pie
+                              data={filteredStats.difficultyDist}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={30}
+                              outerRadius={50}
+                              paddingAngle={5}
+                              dataKey="value"
+                            >
+                              {filteredStats.difficultyDist.map((entry, index) => (
+                                <Cell key={`f-cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip contentStyle={{ fontSize: '10px' }} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="flex justify-center gap-3 mt-2">
+                        {filteredStats.difficultyDist.map((entry, i) => (
+                          <div key={`f-leg-${i}`} className="flex items-center gap-1">
+                            <div className="w-2 h-2" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                            <span className="text-[9px] font-bold">{entry.name}: {entry.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-none border-0 bg-white shadow-sm overflow-hidden">
+                    <CardHeader className="border-b border-slate-100 bg-slate-50/50 py-2 px-4">
+                      <CardTitle className="text-[10px] font-bold flex items-center gap-2">
+                        <BarChart3 className="w-3 h-3 text-indigo-500" />
+                        결과 내 시대 분포
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-4">
+                      <div className="h-[160px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={filteredStats.eraDist} layout="vertical" margin={{ left: -20, right: 20 }}>
+                            <XAxis type="number" hide />
+                            <YAxis dataKey="name" type="category" fontSize={10} tickLine={false} axisLine={false} width={50} />
+                            <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ fontSize: '10px' }} />
+                            <Bar dataKey="value" fill="#1E293B" barSize={12} radius={[0, 2, 2, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-none border-0 bg-white shadow-sm overflow-hidden">
+                    <CardHeader className="border-b border-slate-100 bg-slate-50/50 py-2 px-4">
+                      <CardTitle className="text-[10px] font-bold flex items-center gap-2">
+                        <Activity className="w-3 h-3 text-indigo-500" />
+                        결과 요약 지표
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+                          <span className="text-[10px] text-slate-500">평균 정답률</span>
+                          <span className="text-lg font-black text-indigo-600">{filteredStats.avgCorr}%</span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+                          <span className="text-[10px] text-slate-500">검색된 문항 수</span>
+                          <span className="text-lg font-black">{filteredQuestions.length}건</span>
+                        </div>
+                        <div className="pt-2">
+                          <p className="text-[9px] text-slate-400 italic">
+                            * 설정한 검색 조건에 부합하는 {filteredQuestions.length}개 문항의 원시 데이터 분석 결과입니다.
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
             </>
           )}
         </div>
