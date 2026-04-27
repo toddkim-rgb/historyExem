@@ -1324,6 +1324,14 @@ export default function App() {
               selectedExamId={selectedExamId} 
               questions={questions}
               onExamChange={setSelectedExamId}
+              onSelectQuestion={(q) => {
+                setActiveMenu('management');
+                setActiveTab(q.type === 'advanced' ? 'advanced' : 'general');
+                setSelectedQuestion(q);
+                // Calculate page based on question number (10 questions per page)
+                const page = Math.ceil(q.number / 10);
+                setCurrentPage(page);
+              }}
             />
           ) : (
             <div className="flex-1 overflow-hidden p-2">
