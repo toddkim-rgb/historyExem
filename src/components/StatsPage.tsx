@@ -21,10 +21,12 @@ import {
   ComposedChart,
   Area,
 } from 'recharts';
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp, Award, Target, BookOpen, ChevronDown, PieChart as PieChartIcon, BarChart3, Activity, Search, RotateCcw } from 'lucide-react';
 import { Exam, Question } from '../types';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -340,78 +342,86 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                 )}
               </div>
             </CardHeader>
-            <CardContent className="py-2 px-3">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="flex-1 min-w-[200px] space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
-                    키워드
+            <CardContent className="py-2.5 px-4">
+              <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+                <div className="flex-1 min-w-[220px] space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1 tracking-wider">
+                    <Search className="w-2.5 h-2.5" />
+                    문항 검색
                   </label>
-                  <input 
-                    type="text" 
-                    placeholder="문항 제목, 키워드 검색..."
-                    className="w-full h-8 px-3 text-[11px] border border-slate-200 focus:outline-none focus:border-slate-800 transition-colors"
-                    value={searchKeyword}
-                    onChange={(e) => setSearchKeyword(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  />
+                  <div className="relative group">
+                    <Input 
+                      placeholder="검색어를 입력하세요 (제목, 키워드...)" 
+                      value={searchKeyword}
+                      onChange={(e) => setSearchKeyword(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                      className="h-8 rounded-none border-slate-200 text-[11px] px-3 focus-visible:ring-0 focus-visible:border-[#141414] transition-all bg-white"
+                    />
+                  </div>
                 </div>
                 <div className="w-28 space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">급수</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">난이도</label>
                   <Select value={searchLevel} onValueChange={setSearchLevel}>
-                    <SelectTrigger className="w-full h-8 rounded-none border-slate-200 text-[11px]">
+                    <SelectTrigger className="w-full h-8 rounded-none border-slate-200 text-[11px] bg-white focus:ring-0 focus:border-[#141414]">
                       <SelectValue placeholder="전체" />
                     </SelectTrigger>
-                    <SelectContent className="rounded-none">
-                      <SelectItem value="전체">전체</SelectItem>
-                      <SelectItem value="advanced">심화</SelectItem>
-                      <SelectItem value="general">기본</SelectItem>
+                    <SelectContent className="rounded-none border-slate-200">
+                      <SelectItem value="전체" className="text-[11px] rounded-none">전체</SelectItem>
+                      <SelectItem value="advanced" className="text-[11px] rounded-none">심화</SelectItem>
+                      <SelectItem value="general" className="text-[11px] rounded-none">기본</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="w-32 space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">시대</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">시대</label>
                   <Popover>
-                    <PopoverTrigger asChild>
-                      <Button 
-                        variant="outline" 
-                        className="w-full h-8 rounded-none border-slate-200 text-[11px] justify-between font-normal px-3 bg-white"
-                      >
-                        <span className="truncate">
-                          {searchEra.length === 0 
+                    <PopoverTrigger 
+                      className={cn(
+                        buttonVariants({ variant: "outline" }),
+                        "w-full h-8 rounded-none border-slate-200 text-[11px] justify-between font-normal px-3 bg-white hover:bg-slate-50 transition-colors"
+                      )}
+                    >
+                      <span className="truncate">
+                        {searchEra.length === 0 
+                          ? "전체" 
+                          : searchEra.length === eras.length 
                             ? "전체" 
-                            : searchEra.length === eras.length 
-                              ? "전체" 
-                              : `${searchEra[0]}${searchEra.length > 1 ? ` 외 ${searchEra.length - 1}` : ""}`}
-                        </span>
-                        <ChevronDown className="w-3 h-3 opacity-50" />
-                      </Button>
+                            : `${searchEra[0]}${searchEra.length > 1 ? ` 외 ${searchEra.length - 1}` : ""}`}
+                      </span>
+                      <ChevronDown className="w-3 h-3 opacity-50" />
                     </PopoverTrigger>
-                    <PopoverContent className="w-[180px] p-0 rounded-none shadow-lg border-slate-200" align="start">
+                    <PopoverContent className="w-[180px] p-0 rounded-none shadow-xl border-slate-200 animate-in fade-in zoom-in-95 duration-100" align="start">
                       <ScrollArea className="h-48">
-                        <div className="p-2 space-y-1 bg-white">
+                        <div className="p-2 space-y-0.5 bg-white">
                           <div 
-                            className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                            className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors group"
                             onClick={() => {
                               if (searchEra.length === eras.length) setSearchEra([]);
                               else setSearchEra([...eras]);
                             }}
                           >
-                            <Checkbox checked={searchEra.length === eras.length} />
-                            <label className="text-[11px] font-bold leading-none cursor-pointer">전체 선택</label>
+                            <Checkbox 
+                              checked={searchEra.length === eras.length} 
+                              className="w-3.5 h-3.5 border-slate-300 data-[state=checked]:bg-[#141414] data-[state=checked]:border-[#141414] rounded-none"
+                            />
+                            <label className="text-[11px] font-bold leading-none cursor-pointer group-hover:text-[#141414]">전체 선택</label>
                           </div>
-                          <Separator className="my-1 bg-slate-100" />
+                          <Separator className="my-1.5 bg-slate-100" />
                           {eras.map((era) => (
                             <div 
                               key={era}
-                              className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                              className="flex items-center space-x-2 p-1.5 hover:bg-slate-100 cursor-pointer transition-colors group"
                               onClick={() => {
                                 const isSelected = searchEra.includes(era);
                                 if (isSelected) setSearchEra(searchEra.filter(s => s !== era));
                                 else setSearchEra([...searchEra, era]);
                               }}
                             >
-                              <Checkbox checked={searchEra.includes(era)} />
-                              <label className="text-[11px] font-medium leading-none cursor-pointer">{era}</label>
+                              <Checkbox 
+                                checked={searchEra.includes(era)} 
+                                className="w-3.5 h-3.5 border-slate-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 rounded-none"
+                              />
+                              <label className="text-[11px] font-medium leading-none cursor-pointer group-hover:text-slate-900">{era}</label>
                             </div>
                           ))}
                         </div>
@@ -420,49 +430,55 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   </Popover>
                 </div>
                 <div className="w-44 space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">문항유형</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">문항유형</label>
                   <Popover>
-                    <PopoverTrigger asChild>
-                      <Button 
-                        variant="outline" 
-                        className="w-full h-8 rounded-none border-slate-200 text-[11px] justify-between font-normal px-3 bg-white"
-                      >
-                        <span className="truncate">
-                          {searchCategory.length === 0 
+                    <PopoverTrigger 
+                      className={cn(
+                        buttonVariants({ variant: "outline" }),
+                        "w-full h-8 rounded-none border-slate-200 text-[11px] justify-between font-normal px-3 bg-white hover:bg-slate-50 transition-colors"
+                      )}
+                    >
+                      <span className="truncate">
+                        {searchCategory.length === 0 
+                          ? "전체" 
+                          : searchCategory.length === categories.length 
                             ? "전체" 
-                            : searchCategory.length === categories.length 
-                              ? "전체" 
-                              : `${searchCategory[0]}${searchCategory.length > 1 ? ` 외 ${searchCategory.length - 1}` : ""}`}
-                        </span>
-                        <ChevronDown className="w-3 h-3 opacity-50" />
-                      </Button>
+                            : `${searchCategory[0]}${searchCategory.length > 1 ? ` 외 ${searchCategory.length - 1}` : ""}`}
+                      </span>
+                      <ChevronDown className="w-3 h-3 opacity-50" />
                     </PopoverTrigger>
-                    <PopoverContent className="w-[240px] p-0 rounded-none shadow-lg border-slate-200" align="start">
+                    <PopoverContent className="w-[240px] p-0 rounded-none shadow-xl border-slate-200 animate-in fade-in zoom-in-95 duration-100" align="start">
                       <ScrollArea className="h-56">
-                        <div className="p-2 space-y-1 bg-white">
+                        <div className="p-2 space-y-0.5 bg-white">
                           <div 
-                            className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                            className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors group"
                             onClick={() => {
                               if (searchCategory.length === categories.length) setSearchCategory([]);
                               else setSearchCategory([...categories]);
                             }}
                           >
-                            <Checkbox checked={searchCategory.length === categories.length} />
-                            <label className="text-[11px] font-bold leading-none cursor-pointer">전체 선택</label>
+                            <Checkbox 
+                              checked={searchCategory.length === categories.length} 
+                              className="w-3.5 h-3.5 border-slate-300 data-[state=checked]:bg-[#141414] data-[state=checked]:border-[#141414] rounded-none"
+                            />
+                            <label className="text-[11px] font-bold leading-none cursor-pointer group-hover:text-[#141414]">전체 선택</label>
                           </div>
-                          <Separator className="my-1 bg-slate-100" />
+                          <Separator className="my-1.5 bg-slate-100" />
                           {categories.map((cat) => (
                             <div 
                               key={cat}
-                              className="flex items-center space-x-2 p-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                              className="flex items-center space-x-2 p-1.5 hover:bg-slate-100 cursor-pointer transition-colors group"
                               onClick={() => {
                                 const isSelected = searchCategory.includes(cat);
                                 if (isSelected) setSearchCategory(searchCategory.filter(s => s !== cat));
                                 else setSearchCategory([...searchCategory, cat]);
                               }}
                             >
-                              <Checkbox checked={searchCategory.includes(cat)} />
-                              <label className="text-[11px] font-medium leading-none cursor-pointer">{cat}</label>
+                              <Checkbox 
+                                checked={searchCategory.includes(cat)} 
+                                className="w-3.5 h-3.5 border-slate-300 data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-600 rounded-none"
+                              />
+                              <label className="text-[11px] font-medium leading-none cursor-pointer group-hover:text-slate-900">{cat}</label>
                             </div>
                           ))}
                         </div>
@@ -471,34 +487,32 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   </Popover>
                 </div>
                 <div className="w-32 space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">정답률</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">정답률</label>
                   <Select value={searchCorrectRate} onValueChange={setSearchCorrectRate}>
-                    <SelectTrigger className="w-full h-8 rounded-none border-slate-200 text-[11px]">
+                    <SelectTrigger className="w-full h-8 rounded-none border-slate-200 text-[11px] bg-white focus:ring-0 focus:border-[#141414]">
                       <SelectValue placeholder="전체" />
                     </SelectTrigger>
-                    <SelectContent className="rounded-none">
-                      <SelectItem value="전체">전체</SelectItem>
-                      <SelectItem value="high">80% 이상</SelectItem>
-                      <SelectItem value="mid">50%~80%</SelectItem>
-                      <SelectItem value="low">50% 미만</SelectItem>
+                    <SelectContent className="rounded-none border-slate-200 font-sans">
+                      <SelectItem value="전체" className="text-[11px] rounded-none">전체</SelectItem>
+                      <SelectItem value="high" className="text-[11px] rounded-none">80% 이상 (정답)</SelectItem>
+                      <SelectItem value="mid" className="text-[11px] rounded-none">50%~80% (주의)</SelectItem>
+                      <SelectItem value="low" className="text-[11px] rounded-none">50% 미만 (난관)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex gap-1.5 h-8">
+                <div className="flex items-center gap-2">
                   <Button 
                     onClick={handleSearch}
-                    className="h-8 rounded-none bg-slate-900 hover:bg-black text-[11px] font-bold px-4 flex items-center gap-1.5"
+                    className="h-8 rounded-none bg-[#141414] hover:bg-[#2a2a2a] text-white px-4 text-[11px] font-bold flex items-center gap-2 transition-all active:scale-[0.98]"
                   >
-                    <Search className="w-3 h-3" />
-                    검색
+                    검색하기
                   </Button>
                   <Button 
                     variant="outline"
                     onClick={handleReset}
-                    className="h-8 rounded-none border-slate-200 text-slate-500 bg-white hover:bg-slate-50 hover:text-slate-900 text-[11px] px-2.5"
-                    title="검색 조건 초기화"
+                    className="h-8 rounded-none border-slate-200 hover:bg-slate-50 px-3 text-[11px] font-bold flex items-center gap-2 text-slate-500"
                   >
-                    <RotateCcw className="w-3 h-3" />
+                    초기화
                   </Button>
                 </div>
               </div>
