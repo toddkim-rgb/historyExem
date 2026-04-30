@@ -20,7 +20,15 @@ export interface Question {
   answer: number;
   score: number;
   correctRate: number;
+  expectedCorrectRate?: number;
+  ratingGap?: string;
+  author?: string;
+  source?: string;
   explanation: string;
   category: string;
+  field?: string;
+  etc?: string;
   options?: string[];
+  accessibleQuestion?: string;
+  imageDescription?: string;
 }

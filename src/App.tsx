@@ -35,7 +35,7 @@ import {
   serverTimestamp,
   orderBy
 } from 'firebase/firestore';
-import { db } from './lib/firebase';
+import { auth, db } from './lib/firebase';
 import { Exam, Question } from './types';
 
 // UI Components
@@ -53,14 +53,24 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 
 import { StatsPage } from './components/StatsPage';
 import { UserView } from './components/UserView';
+import { SingleQuestionView } from './components/SingleQuestionView';
 
 const ERAS = ['선사', '고대', '고려', '조선', '근대', '일제강점', '현대'];
 const DIFFICULTIES = ['상', '중', '하'];
+const FIELDS = ['정치', '경제', '사회', '문화', '기타'];
+const QUESTION_TYPES = [
+  '역사지식 이해',
+  '사료 분석 및 해석',
+  '역사 상황 파악',
+  '역사 탐구 설계 및 수행',
+  '역사적 상상력 및 추론',
+  '역사적 가치 판단 및 태도'
+];
 
 export default function App() {
   const [exams, setExams] = useState<Exam[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>('');
-  const [activeMenu, setActiveMenu] = useState<'management' | 'stats' | 'rounds' | 'user'>('management');
+  const [activeMenu, setActiveMenu] = useState<'management' | 'stats' | 'rounds' | 'user' | 'user_single'>('management');
   const [questions, setQuestions] = useState<Question[]>([]);
   const [activeTab, setActiveTab] = useState<'general' | 'advanced'>('general');
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
@@ -104,18 +114,31 @@ export default function App() {
   // Questions Listener
   useEffect(() => {
     setCurrentPage(1);
-    if (!selectedExamId) return;
-    const q = query(
-      collection(db, 'questions'), 
-      where('examId', '==', selectedExamId),
-      where('type', '==', activeTab)
-    );
+    if (!selectedExamId && activeMenu !== 'stats') return;
+
+    let q;
+    if (activeMenu === 'stats') {
+      // In stats mode, fetch all questions to enable cross-exam filtering
+      q = query(collection(db, 'questions'), orderBy('number', 'asc'));
+    } else {
+      // In other modes, fetch only for selected exam and tab
+      q = query(
+        collection(db, 'questions'), 
+        where('examId', '==', selectedExamId),
+        where('type', '==', activeTab)
+      );
+    }
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const questionData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question));
-      setQuestions([...questionData].sort((a, b) => a.number - b.number));
+      if (activeMenu === 'stats') {
+        setQuestions(questionData);
+      } else {
+        setQuestions([...questionData].sort((a, b) => a.number - b.number));
+      }
     });
     return () => unsubscribe();
-  }, [selectedExamId, activeTab]);
+  }, [selectedExamId, activeTab, activeMenu]);
 
   const handleTempSave = () => {
     const now = new Date();
@@ -181,7 +204,32 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const result = event.target?.result as string;
-      setSelectedQuestion({ ...selectedQuestion, imageUrl: result });
+      
+      // 이미지 압축 및 리사이징 로직 추가 (1MB 제한 방지)
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // 최대 너비 1000px로 제한
+        const MAX_WIDTH = 1000;
+        if (width > MAX_WIDTH) {
+          height = (MAX_WIDTH / width) * height;
+          width = MAX_WIDTH;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          // 용량을 줄이기 위해 jpeg 0.6 품질로 변환
+          const compressedResult = canvas.toDataURL('image/jpeg', 0.6);
+          setSelectedQuestion({ ...selectedQuestion, imageUrl: compressedResult });
+        }
+      };
+      img.src = result;
     };
     reader.readAsDataURL(file);
   };
@@ -248,10 +296,17 @@ export default function App() {
       options: randomTemplate.options,
       answer: randomTemplate.answer,
       category: randomTemplate.category,
+      field: FIELDS[num % FIELDS.length],
       explanation: randomTemplate.explanation,
       difficulty: '중',
       score: 2,
-      correctRate: 85
+      correctRate: 85,
+      expectedCorrectRate: 80,
+      ratingGap: '1:85, 2:5, 3:5, 4:3, 5:2',
+      source: '한능검 기출 변형',
+      author: auth.currentUser?.displayName || '한능검 관리자',
+      accessibleQuestion: `[전맹자용] ${randomTemplate.title}`,
+      imageDescription: `[이미지 설명] ${randomTemplate.era} 시대 관련 이미지`
     });
   };
 
@@ -269,9 +324,17 @@ export default function App() {
       answer: 1,
       score: 2,
       correctRate: 0,
+      expectedCorrectRate: 0,
       explanation: '',
       category: '역사지식 이해',
-      options: ['', '', '', '', '']
+      field: '정치',
+      options: ['', '', '', '', ''],
+      author: auth.currentUser?.displayName || '한능검 관리자',
+      source: '',
+      ratingGap: '',
+      accessibleQuestion: '',
+      imageDescription: '',
+      etc: ''
     };
     setSelectedQuestion({ ...newQ } as Question);
   };
@@ -302,78 +365,168 @@ export default function App() {
     const templates = [
       {
         era: '선사',
-        title: '다음 유물이 만들어진 시대의 특징으로 옳은 것은?',
-        keywords: ['#비파형_동검', '#고인돌', '#사유재산'],
-        options: ['평등한 공동체 생활을 하였다.', '주로 동굴이나 막집에 거주하였다.', '철제 농기구로 농사를 지었다.', '계급이 분화된 사회가 출현하였다.', '가락바퀴로 실을 뽑아 옷을 만들었다.'],
-        answer: 4,
         category: '역사지식 이해',
-        explanation: '비파형 동검과 고인돌은 청동기 시대의 대표적 유물입니다. 이때부터 계급 사회가 시작되었습니다.'
+        title: '다음 유물이 만들어진 시대의 특징으로 옳은 것은?',
+        keywords: ['구석기', '주먹도끼', '동굴'],
+        options: ['주먹도끼를 사용하여 사냥하였다.', '반달 돌칼을 이용하여 곡식을 거두었다.', '가락바퀴를 이용하여 실을 뽑았다.', '철제 농기구를 사용하여 농사를 지었다.', '비파형 동검을 제작하여 사용하였다.'],
+        answer: 1,
+        explanation: '주먹도끼는 구석기 시대의 대표적인 유물입니다. 이때는 채집과 사냥을 하며 동굴이나 막집에 거주했습니다.'
       },
       {
         era: '고대',
-        title: '(가) 나라에 대한 설명으로 옳은 것은?',
-        keywords: ['#삼국사기', '#백제', '#온조'],
-        options: ['무천이라는 제천 행사를 열었다.', '정사암 회의에서 국政을 논의하였다.', '골품제라는 엄격한 신분 제도가 있었다.', '22담로에 왕족을 파견하여 지방을 관리했다.', '진대법을 실시하여 빈민을 구제하였다.'],
-        answer: 4,
         category: '사료 분석 및 해석',
-        explanation: '백제는 무령왕 때 22담로에 왕족을 파견하여 지방 통제력을 강화하였습니다.'
+        title: '밑줄 친 ‘이 나라’에 대한 설명으로 옳은 것은?',
+        keywords: ['삼국사기', '백제', '온조'],
+        options: ['무천이라는 제천 행사를 열었다.', '정사암 회의에서 국정을 논의하였다.', '골품제라는 엄격한 신분 제도가 있었다.', '22담로에 왕족을 파견하여 지방을 관리했다.', '진대법을 실시하여 빈민을 구제하였다.'],
+        answer: 4,
+        explanation: '백제는 무령왕 때 22담로에 왕족을 파견하여 지방 지방 통제력을 강화하였습니다.'
       },
       {
         era: '고려',
-        title: '밑줄 친 왕의 업적으로 옳은 것을 고르시오.',
-        keywords: ['#과거제', '#노비안검법', '#고려_광종'],
+        category: '역사 상황 파악',
+        title: '밑줄 친 ‘왕’의 업적으로 옳은 것을 고르시오.',
+        keywords: ['과거제', '노비안검법', '광종'],
         options: ['독서삼품과를 설치하였다.', '의창을 두어 기근에 대비했다.', '현직 관리에게만 전지를 지급했다.', '공복을 제정하여 관리의 기강을 세웠다.', '6조 직계제를 부활시켰다.'],
         answer: 4,
-        category: '역사 상황 파악',
         explanation: '고려 광종은 노비안검법과 과거제 실시 외에도 백관의 공복을 제정하여 위계질서를 세웠습니다.'
       },
       {
         era: '조선',
-        title: '다음 일기가 작성된 당시의 시사 상황으로 옳은 것은?',
-        keywords: ['#대동법', '#모내기법', '#상평통보'],
-        options: ['병란도가 국제 무역항으로 붐볐다.', '덕대가 광산을 전문으로 경영하였다.', '과전법이 실시되어 수조권이 지급되었다.', '솔거 노비와 외거 노비가 있었다.', '솔내 마을에서 향약이 보급되었다.'],
-        answer: 2,
         category: '역사적 상상력 및 추론',
+        title: '다음 일기가 작성된 당시의 경제 상황으로 옳은 것은?',
+        keywords: ['대동법', '모내기법', '상평통보'],
+        options: ['병란도가 국제 무역항으로 붐볐다.', '덕대가 광산을 전문으로 경영하였다.', '과전법이 실시되어 수조권이 지급되었다.', '민영 수공업보다 관영 수공업이 발달하였다.', '향약이 보급되어 향촌 자치가 이루어졌다.'],
+        answer: 2,
         explanation: '조선 후기에는 광산 경영 방식인 덕대제가 발달하였습니다.'
       },
       {
         era: '근대',
+        category: '역사 탐구 설계 및 수행',
         title: '(가) 운동에 대한 설명으로 옳은 것은?',
-        keywords: ['#황토현_전투', '#전주화약', '#집강소'],
+        keywords: ['황토현 전투', '전주화약', '집강소'],
         options: ['외세의 침략에 저항하는 의병 운동이었다.', '정부의 탄압으로 간도 지역으로 이동하였다.', '백정에 대한 차별 철폐를 주장하였다.', '자주 관리와 민주적 개혁을 요구하였다.', '신식 군대인 별기군 설치에 반발하였다.'],
         answer: 4,
-        category: '역사 탐구 설계 및 수행',
         explanation: '동학 농민 운동은 폐정 개혁안을 내세우며 민주적이고 자주적인 발전을 꾀했습니다.'
+      },
+      {
+        era: '일제강점',
+        category: '역사적 가치 판단 및 태도',
+        title: '밑줄 친 ‘이 단체’의 활동으로 옳은 것은?',
+        keywords: ['신간회', '광주학생항일운동', '민족유일당'],
+        options: ['독립 신문을 발행하여 민중을 계몽하였다.', '파리 강화 회의에 독립 청원서를 제출하였다.', '광주 학생 항일 운동에 조사단을 파견하였다.', '어린이날을 제정하고 잡지 어린이를 창간하였다.', '국채 보상 운동을 주도적으로 전개하였다.'],
+        answer: 3,
+        explanation: '신간회는 민족 유일당 운동의 결과로 창립되었으며, 광주 학생 항일 운동 당시 조사단을 파견하여 지원했습니다.'
+      },
+      {
+        era: '현대',
+        category: '역사지식 이해',
+        title: '다음 뉴스에서 보도하고 있는 민주화 운동에 대한 설명으로 옳은 것은?',
+        keywords: ['4.19 혁명', '3.15 부정선거', '시민군'],
+        options: ['유신 체제가 붕괴되는 계기가 되었다.', '대통령 직선제 개헌을 이끌어내었다.', '시민군이 조직되어 계엄군에 맞섰다.', '이승만 정부의 부정 선거에 항거하여 일어났다.', '한일 협정 체결에 반대하여 전개되었다.'],
+        answer: 4,
+        explanation: '4.19 혁명은 3.15 부정 선거를 계기로 일어난 민주화 운동입니다.'
       }
     ];
 
     try {
+      setIsUploading(true);
+      setUploadProgress(0);
+      
+      const toAdd = [];
       for (let i = 1; i <= 50; i++) {
         const existing = questions.find(item => item.number === i);
         if (!existing) {
-          const template = templates[Math.floor(Math.random() * templates.length)];
+          const template = templates[i % templates.length];
           const newQ: Omit<Question, 'id'> = {
             examId: selectedExamId,
             type: activeTab,
             number: i,
             era: template.era,
-            difficulty: '중',
-            title: `[더미] #${i} ${template.title}`,
+            difficulty: DIFFICULTIES[i % DIFFICULTIES.length] as any,
+            title: template.title,
             keywords: template.keywords,
-            imageUrl: `https://picsum.photos/seed/history-dummy-${selectedExamId}-${i}/800/600`,
+            imageUrl: `https://picsum.photos/seed/hist-${selectedExamId}-${activeTab}-${i}/800/600`,
             answer: template.answer,
-            score: Math.floor(Math.random() * 2) + 2,
-            correctRate: Math.floor(Math.random() * 15) + 83,
+            score: (i % 3) + 1,
+            correctRate: 60 + Math.floor(Math.random() * 30),
+            expectedCorrectRate: 70 + Math.floor(Math.random() * 10),
             explanation: template.explanation,
             category: template.category,
-            options: template.options
+            field: FIELDS[i % FIELDS.length],
+            options: template.options,
+            author: auth.currentUser?.displayName || '한능검 관리자',
+            source: `기출 ${60 + Math.floor(i/10)}회 ${i % 10 || 10}번 응용`,
+            ratingGap: `①:70%, ②:10%, ③:10%, ④:5%, ⑤:5%`,
+            accessibleQuestion: `[전맹자용] ${template.title}에 대한 상세 설명 및 선택지 텍스트 버전입니다.`,
+            imageDescription: `[이미지 설명] ${template.era} 시대의 주요 인물 또는 사건을 묘사한 삽화입니다.`,
+            etc: ''
           };
-          await addDoc(collection(db, 'questions'), newQ);
+          toAdd.push(newQ);
         }
       }
-      alert('전체 문항(1~50번) 중 비어있는 항목에 대해 더미 데이터가 생성되었습니다.');
+
+      for (let i = 0; i < toAdd.length; i++) {
+        await addDoc(collection(db, 'questions'), toAdd[i]);
+        setUploadProgress(Math.round(((i + 1) / toAdd.length) * 100));
+      }
+
+      setIsUploading(false);
+      alert(`${toAdd.length}개의 더미 문항이 생성되었습니다.`);
     } catch (error) {
+      setIsUploading(false);
       console.error('Error seeding dummy data:', error);
+      alert('데이터 생성 중 오류가 발생했습니다.');
+    }
+  };
+
+  const generateResponseRates = async () => {
+    if (questions.length === 0) {
+      alert('생성할 문항 데이터가 없습니다.');
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      setUploadProgress(0);
+      
+      const circledNumbers = ['①', '②', '③', '④', '⑤'];
+      let count = 0;
+      
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
+        if (!q.id) continue;
+        
+        const correctIndex = (q.answer || 1) - 1;
+        let values = [0, 0, 0, 0, 0];
+        
+        // Give correct answer a higher percentage (40% to 85%)
+        const correctRate = 40 + Math.floor(Math.random() * 45);
+        values[correctIndex] = correctRate;
+        
+        // Distribute remaining
+        let remaining = 100 - correctRate;
+        const otherIndices = [0, 1, 2, 3, 4].filter(idx => idx !== correctIndex);
+        
+        // Distribute remaining among others randomly
+        for (let j = 0; j < otherIndices.length - 1; j++) {
+          const val = Math.floor(Math.random() * (remaining / 1.5));
+          values[otherIndices[j]] = val;
+          remaining -= val;
+        }
+        values[otherIndices[otherIndices.length - 1]] = remaining;
+        
+        const ratingGap = circledNumbers.map((num, idx) => `${num}:${values[idx]}%`).join(', ');
+        
+        await updateDoc(doc(db, 'questions', q.id), { ratingGap });
+        count++;
+        setUploadProgress(Math.round(((i + 1) / questions.length) * 100));
+      }
+
+      setIsUploading(false);
+      alert(`${count}개 문항의 답지반응률 더미 데이터가 생성되었습니다.`);
+    } catch (error) {
+      setIsUploading(false);
+      console.error('Error generating response rates:', error);
       alert('데이터 생성 중 오류가 발생했습니다.');
     }
   };
@@ -393,36 +546,53 @@ export default function App() {
 
       const mappedQuestions: Omit<Question, 'id'>[] = jsonData.map((row: any) => ({
         examId: selectedExamId,
-        type: activeTab,
-        number: parseInt(row['번호'] || row['number'] || 0),
+        type: (row['문항유형'] === '심화' || activeTab === 'advanced') ? 'advanced' : 'general',
+        number: parseInt(row['문항ID'] || row['번호'] || row['number'] || 0),
         era: row['시대'] || row['era'] || '',
         difficulty: (row['난이도'] || row['difficulty'] || '중') as '상' | '중' | '하',
-        title: row['질문'] || row['title'] || '',
-        keywords: String(row['키워드'] || row['keywords'] || '').split(',').map((k: string) => k.trim()),
-        imageUrl: row['이미지URL'] || row['imageUrl'] || '',
+        title: row['문항제목'] || row['질문'] || row['title'] || '',
+        keywords: String(row['주제어'] || row['키워드'] || row['keywords'] || '').split(/[,|#]/).map((k: string) => k.trim()).filter(Boolean),
+        imageUrl: row['문항이미지(파일선택)'] || row['이미지URL'] || row['imageUrl'] || '',
         answer: parseInt(row['정답'] || row['answer'] || 1),
         score: parseInt(row['배점'] || row['score'] || 2),
-        correctRate: parseInt(row['정답률'] || row['correctRate'] || 0),
+        correctRate: parseInt(row['실제정답률'] || row['정답률'] || row['correctRate'] || 0),
         explanation: row['해설'] || row['explanation'] || '',
-        category: row['문제유형'] || row['category'] || '역사지식 이해',
-        options: [
-          row['선택지1'] || row['option1'] || '',
-          row['선택지2'] || row['option2'] || '',
-          row['선택지3'] || row['option3'] || '',
-          row['선택지4'] || row['option4'] || '',
-          row['선택지5'] || row['option5'] || '',
-        ]
+        category: row['문항유형'] || row['category'] || '역사지식 이해',
+        field: row['분야'] || row['field'] || '정치',
+        etc: row['비고'] || row['etc'] || '',
+        author: row['출제위원'] || row['author'] || '',
+        source: row['출제근거'] || row['source'] || '',
+        ratingGap: row['평정간극'] || row['ratingGap'] || '',
+        expectedCorrectRate: parseInt(row['예상정답률'] || row['expectedCorrectRate'] || 0),
+        accessibleQuestion: row['전맹자용문항'] || row['accessibleQuestion'] || '',
+        imageDescription: row['이미지설명'] || row['imageDescription'] || '',
+        options: row['문항내용텍스트'] 
+          ? row['문항내용텍스트'].split(/[①-⑤]/).filter((s: string) => s.trim().length > 0).map((s: string) => s.trim()).slice(0, 5)
+          : [
+              row['선택지1'] || row['option1'] || '',
+              row['선택지2'] || row['option2'] || '',
+              row['선택지3'] || row['option3'] || '',
+              row['선택지4'] || row['option4'] || '',
+              row['선택지5'] || row['option5'] || '',
+            ]
       }));
 
       for (let i = 0; i < mappedQuestions.length; i++) {
         const q = mappedQuestions[i];
-        if (!q.title) continue;
-        await addDoc(collection(db, 'questions'), q);
+        if (!q.title || !q.number) continue;
+        
+        // Update if exists, or create new
+        const existingQ = questions.find(item => item.number === q.number && item.type === q.type);
+        if (existingQ && existingQ.id) {
+          await updateDoc(doc(db, 'questions', existingQ.id), q);
+        } else {
+          await addDoc(collection(db, 'questions'), q);
+        }
         setUploadProgress(Math.round(((i + 1) / mappedQuestions.length) * 100));
       }
 
       setIsUploading(false);
-      alert(`${mappedQuestions.length}개의 문항이 성공적으로 업로드되었습니다.`);
+      alert(`${mappedQuestions.length}개의 문항이 성공적으로 업로드 및 동기화되었습니다.`);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error) {
       setIsUploading(false);
@@ -432,144 +602,84 @@ export default function App() {
   };
 
   const downloadExcelTemplate = () => {
-    const categories = [
-      '역사지식 이해',
-      '사료 분석 및 해석',
-      '역사 상황 파악',
-      '역사 탐구 설계 및 수행',
-      '역사적 상상력 및 추론',
-      '역사적 가치 판단 및 태도'
+    const tableHeaders = [
+      "문항ID", "급수", "출제위원", "시대", "분야", "문항유형", "배점", "난이도", "정답", 
+      "예상정답률", "평정간극", "주제어", "출제근거", "문항제목", 
+      "문항이미지(파일선택)", "해설", "문항내용텍스트", "전맹자용문항", "비고"
     ];
 
-    const exampleData = [
+    const templates = [
       {
-        '번호': 1,
-        '시대': '선사',
-        '난이도': '하',
-        '질문': '(가) 시대의 생활 모습으로 옳은 것은?',
-        '키워드': '#구석기 #주먹도끼 #동굴 #채집',
-        '이미지URL': 'https://picsum.photos/seed/history1/800/600',
-        '정답': 1,
-        '배점': 2,
-        '정답률': 85,
-        '선택지1': '주먹도끼를 사용하여 짐승을 사냥하였다.',
-        '선택지2': '반달 돌칼을 이용하여 곡식을 수확하였다.',
-        '선택지3': '가락바퀴를 이용하여 실을 뽑았다.',
-        '선택지4': '철제 농기구를 사용하여 농사를 지었다.',
-        '선택지5': '비파형 동검을 제작하여 사용하였다.',
-        '해설': '주먹도끼는 구석기 시대의 대표적인 유물입니다.',
-        '문제유형': '역사지식 이해'
+        era: '선사',
+        category: '역사지식 이해',
+        title: '다음 유물이 만들어진 시대의 특징으로 옳은 것은?',
+        keywords: '구석기, 주먹도끼, 동굴',
+        options: '① 주먹도끼를 사용하여 사냥하였다. ② 반달 돌칼을 이용하여 곡식을 거두었다. ③ 가락바퀴를 이용하여 실을 뽑았다. ④ 철제 농기구를 사용하여 농사를 지었다. ⑤ 비파형 동검을 제작하여 사용하였다.',
+        answer: 1,
+        explanation: '주먹도끼는 구석기 시대의 대표적인 유물입니다.'
       },
       {
-        '번호': 2,
-        '시대': '고대',
-        '난이도': '중',
-        '질문': '밑줄 친 ‘이 왕’에 대한 설명으로 옳은 것은?',
-        '키워드': '#광개토대왕 #신라구원 #영토확장',
-        '이미지URL': 'https://picsum.photos/seed/history2/800/600',
-        '정답': 3,
-        '배점': 3,
-        '정답률': 72,
-        '선택지1': '병부를 설치하고 율령을 반포하였다.',
-        '선택지2': '불교를 공인하여 사상적 통합을 꾀하였다.',
-        '선택지3': '신라에 침입한 왜구를 격퇴하였다.',
-        '선택지4': '독서삼품과를 실시하여 인재를 등용하였다.',
-        '선택지5': '수도를 사비로 옮기고 국호를 남부여로 바꾸었다.',
-        '해설': '광개토대왕은 신라 내물왕의 요청으로 왜구를 격퇴하였습니다.',
-        '문제유형': '사료 분석 및 해석'
+        era: '고대',
+        category: '사료 분석 및 해석',
+        title: '밑줄 친 ‘이 나라’에 대한 설명으로 옳은 것은?',
+        keywords: '백제, 온조, 무령왕',
+        options: '① 무천이라는 제천 행사를 열었다. ② 정사암 회의에서 국정을 논의하였다. ③ 골품제라는 엄격한 신분 제도가 있었다. ④ 22담로에 왕족을 파견하여 지방을 관리했다. ⑤ 진대법을 실시하여 빈민을 구제하였다.',
+        answer: 4,
+        explanation: '백제는 무령왕 때 22담로에 왕족을 파견하였습니다.'
       },
       {
-        '번호': 3,
-        '시대': '고려',
-        '난이도': '중',
-        '질문': '다음 외교 문서를 보낸 국가에 대한 고려의 대응으로 옳은 것은?',
-        '키워드': '#서희 #강동6주 #거란',
-        '이미지URL': 'https://picsum.photos/seed/history3/800/600',
-        '정답': 2,
-        '배점': 2,
-        '정답률': 68,
-        '선택지1': '박위를 파견하여 근거지를 토벌하였다.',
-        '선택지2': '서희가 외교 담판을 벌여 강동 6주를 확보하였다.',
-        '선택지3': '윤관이 별무반을 이끌고 동북 9성을 축조하였다.',
-        '선택지4': '강화도로 천도하여 끈질기게 항전하였다.',
-        '선택지5': '쌍성총관부를 공격하여 철령 이북의 땅을 되찾았다.',
-        '해설': '고려는 거란의 침입 때 서희의 외교 담판으로 강동 6주를 얻었습니다.',
-        '문제유형': '역사 상황 파악'
-      },
-      {
-        '번호': 4,
-        '시대': '조선',
-        '난이도': '하',
-        '질문': '(가) 지도에 대한 설명으로 옳은 것은?',
-        '키워드': '#혼일강리역대국도지도 #태종 #세계지도',
-        '이미지URL': 'https://picsum.photos/seed/history4/800/600',
-        '정답': 4,
-        '배점': 2,
-        '정답률': 91,
-        '선택지1': '목판으로 인쇄되어 대량으로 보급되었다.',
-        '선택지2': '정상기의 백리척을 사용하여 제작되었다.',
-        '선택지3': '한반도의 지형이 실제와 매우 유사하게 묘사되었다.',
-        '선택지4': '현존하는 동양 최고의 세계 지도 중 하나이다.',
-        '선택지5': '중국에서 들여온 곤여만국전도를 바탕으로 그렸다.',
-        '해설': '혼일강리역대국도지도는 조선 태종 때 만들어진 동양 최고의 세계지도 중 하나입니다.',
-        '문제유형': '역사 탐구 설계 및 수행'
-      },
-      {
-        '번호': 5,
-        '시대': '근대',
-        '난이도': '상',
-        '질문': '다음 사건이 일어난 이후의 사실로 옳은 것은?',
-        '키워드': '#갑신정변 #3일천하 #우정총국',
-        '이미지URL': 'https://picsum.photos/seed/history5/800/600',
-        '정답': 5,
-        '배점': 3,
-        '정답률': 42,
-        '선택지1': '어재연 장군이 광성보에서 항전하였다.',
-        '선택지2': '운요호 사건을 계기로 강화도 조약이 체결되었다.',
-        '선택지3': '구식 군인들이 차별에 반발하여 임오군란을 일으켰다.',
-        '선택지4': '정부가 근대적 조세 제도를 마련하기 위해 지계아문을 설치하였다.',
-        '선택지5': '청과 일본 사이의 세력 균형을 위해 한성 조약이 체결되었다.',
-        '해설': '갑신정변 이후 텐진 조약과 한성 조약이 체결되었습니다.',
-        '문제유형': '역사적 가치 판단 및 태도'
+        era: '고려',
+        category: '역사 상황 파악',
+        title: '밑줄 친 ‘왕’의 업적으로 옳은 것을 고르시오.',
+        keywords: '고려, 광종, 과거제',
+        options: '① 독서삼품과를 설치하였다. ② 의창을 두어 기근에 대비했다. ③ 현직 관리에게만 전지를 지급했다. ④ 공복을 제정하여 관리의 기강을 세웠다. ⑤ 6조 직계제를 부활시켰다.',
+        answer: 4,
+        explanation: '고려 광종은 백관의 공복을 제정하였습니다.'
       }
     ];
 
-    const templateData = exampleData.concat(
-      Array.from({ length: 45 }, (_, i) => {
-        const num = i + 6;
-        const era = ERAS[i % ERAS.length];
-        const category = categories[i % categories.length];
-        const difficulty = DIFFICULTIES[i % DIFFICULTIES.length];
-        
-        return {
-          '번호': num,
-          '시대': era,
-          '난이도': difficulty,
-          '질문': `[제 ${num}번] ${era} 시대의 주요 사건이나 인물에 대한 탐구 문항입니다.`,
-          '키워드': `#${era}, #역사탐구, #기출`,
-          '이미지URL': `https://picsum.photos/seed/history${num}/800/600`,
-          '정답': (num % 5) + 1,
-          '배점': (num % 3) + 1,
-          '정답률': Math.floor(Math.random() * 15) + 80,
-          '선택지1': '1번 선택지 내용입니다.',
-          '선택지2': '2번 선택지 내용입니다.',
-          '선택지3': '3번 선택지 내용입니다.',
-          '선택지4': '4번 선택지 내용입니다.',
-          '선택지5': '5번 선택지 내용입니다.',
-          '해설': `제 ${num}번 문항에 대한 해설입니다.`,
-          '문제유형': category
-        };
-      })
-    );
+    const dummyData = Array.from({ length: 50 }, (_, i) => {
+      const num = i + 1;
+      const t = templates[i % templates.length];
+      return {
+        "문항ID": num,
+        "급수": "심화",
+        "출제위원": auth.currentUser?.displayName || "한능검 관리자",
+        "시대": t.era,
+        "분야": FIELDS[num % FIELDS.length],
+        "문항유형": t.category,
+        "배점": (num % 3) + 1,
+        "난이도": DIFFICULTIES[num % DIFFICULTIES.length],
+        "정답": t.answer,
+        "예상정답률": 70 + (num % 20),
+        "평정간극": "1:70, 2:10, 3:10, 4:5, 5:5",
+        "주제어": t.keywords,
+        "출제근거": `기출 ${60 + Math.floor(num/10)}회 ${num % 10 || 10}번 응용`,
+        "문항제목": t.title,
+        "문항이미지(파일선택)": `history_q_${num}.png`,
+        "해설": t.explanation,
+        "문항내용텍스트": t.options,
+        "전맹자용문항": `[전맹자용] ${t.title}`,
+        "비고": ""
+      };
+    });
 
-    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const worksheet = XLSX.utils.json_to_sheet(dummyData, { header: tableHeaders });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Questions");
-    XLSX.writeFile(workbook, "history_exam_full_template.xlsx");
+    XLSX.writeFile(workbook, "history_exam_template_50.xlsx");
   };
 
   const handleSaveQuestion = async () => {
     if (!selectedQuestion || !selectedExamId) return;
+
+    // 문서 크기 제한(1MB) 체크
+    const jsonStr = JSON.stringify(selectedQuestion);
+    if (jsonStr.length > 1000000) {
+      alert('문항 데이터의 전체 크기가 1MB를 초과하여 저장할 수 없습니다. 이미지 품질이나 크기를 더 줄여주세요.');
+      return;
+    }
+
     try {
       if (selectedQuestion.id) {
         const { id, ...data } = selectedQuestion;
@@ -578,8 +688,9 @@ export default function App() {
         await addDoc(collection(db, 'questions'), selectedQuestion);
       }
       setSelectedQuestion(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving question:', error);
+      alert(`저장 중 오류가 발생했습니다: ${error.message || '알 수 없는 오류'}`);
     }
   };
 
@@ -669,7 +780,13 @@ export default function App() {
               className={`px-6 py-3 text-[13px] cursor-pointer transition-all ${activeMenu === 'user' ? 'opacity-100 bg-white/5 border-l-3 border-[#D4AF37]' : 'opacity-60 hover:opacity-100'}`}
               onClick={() => setActiveMenu('user')}
             >
-              사용자화면
+              사용자화면(회차별 모의)
+            </li>
+            <li 
+              className={`px-6 py-3 text-[13px] cursor-pointer transition-all ${activeMenu === 'user_single' ? 'opacity-100 bg-white/5 border-l-3 border-[#D4AF37]' : 'opacity-60 hover:opacity-100'}`}
+              onClick={() => setActiveMenu('user_single')}
+            >
+              사용자화면(단항문제 풀기)
             </li>
           </ul>
         </nav>
@@ -689,14 +806,14 @@ export default function App() {
               <div className="h-10 w-1 bg-[#D4AF37]" />
               <div>
                 <h1 className="text-lg font-black tracking-tighter flex items-center gap-2">
-                  {activeMenu === 'management' ? '기출 문항 관리' : activeMenu === 'rounds' ? '기출문제 회차 관리' : activeMenu === 'stats' ? '성적 및 통계 분석' : '사용자 문제풀이 화면'}
+                  {activeMenu === 'management' ? '기출 문항 관리' : activeMenu === 'rounds' ? '기출문제 회차 관리' : activeMenu === 'stats' ? '성적 및 통계 분석' : activeMenu === 'user' ? '사용자 문제풀이 화면' : '단항 문제풀이 화면'}
                   <span className="text-[10px] font-bold text-[#D4AF37] border border-[#D4AF37] px-1.5 py-0.5 ml-2 uppercase tracking-tighter">
                     {activeMenu === 'management' ? 'Admin' : activeMenu === 'rounds' ? 'Rounds' : activeMenu === 'stats' ? 'Report' : 'User'}
                   </span>
                 </h1>
                 <div className="flex items-center gap-2 text-[10px] text-white/50 font-bold uppercase tracking-widest mt-0.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-[#D4AF37]" />
-                  {activeMenu === 'management' ? '한국사능력검정시험 기출문제 데이터베이스 관리' : activeMenu === 'rounds' ? '회차별 기출문제 등록 현황 및 통합 관리' : activeMenu === 'stats' ? '회차별 응시 결과 및 문항 난이도 분석' : '사용자가 직접 문제를 풀고 학습하는 인터페이스'}
+                  {activeMenu === 'management' ? '한국사능력검정시험 기출문제 데이터베이스 관리' : activeMenu === 'rounds' ? '회차별 기출문제 등록 현황 및 통합 관리' : activeMenu === 'stats' ? '회차별 응시 결과 및 문항 난이도 분석' : activeMenu === 'user' ? '사용자가 직접 문제를 풀고 학습하는 인터페이스' : '단일 문항을 선택하여 집중 학습하는 인터페이스'}
                 </div>
               </div>
             </div>
@@ -811,18 +928,6 @@ export default function App() {
                           >
                             <BarChart3 className="w-3 h-3 text-indigo-600" />
                           </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-7 w-7 p-0 rounded-none text-red-500 hover:bg-red-50"
-                            onClick={() => {
-                              if (confirm(`'${examWithLevel.round} ${examWithLevel.displayLevel}' 의 모든 데이터가 삭제됩니다. 정말 삭제하시겠습니까?`)) {
-                                handleDeleteExam(examWithLevel.id);
-                              }
-                            }}
-                          >
-                            <Plus className="w-3 h-3 rotate-45" />
-                          </Button>
                         </div>
                       </div>
                     ))}
@@ -878,20 +983,6 @@ export default function App() {
                   <Plus className="w-3.5 h-3.5" />
                   <span>기출회차 추가</span>
                 </Button>
-                {selectedExamId && (
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="h-9 px-3 rounded-none text-red-600 hover:text-red-700 hover:bg-red-50 text-[11px] font-bold"
-                    onClick={() => {
-                      if (confirm('해당 회차와 포함된 모든 데이터가 삭제됩니다. 계속하시겠습니까?')) {
-                        handleDeleteExam(selectedExamId);
-                      }
-                    }}
-                  >
-                    회차 삭제
-                  </Button>
-                )}
               </div>
             </div>
 
@@ -903,7 +994,8 @@ export default function App() {
                 accept=".xlsx, .xls"
                 onChange={handleExcelUpload}
               />
-              <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold" onClick={seedDummyData}>더미 데이터 생성</Button>
+              <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold" onClick={seedDummyData}>더미 문항 생성</Button>
+              <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold" onClick={generateResponseRates}>반응률 더미 생성</Button>
               <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold gap-2" onClick={() => fileInputRef.current?.click()}>
                 <Upload className="w-3.5 h-3.5" /> 엑셀 업로드
               </Button>
@@ -919,8 +1011,8 @@ export default function App() {
                 <Card className="col-span-5 flex flex-col rounded-none border-[#D1D1CF] shadow-none bg-white min-h-[760px]">
                   <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="flex flex-col h-full">
                 <TabsList className="flex p-0 h-12 bg-transparent rounded-none border-b border-[#D1D1CF] gap-2 px-4 whitespace-nowrap shrink-0">
-                  <TabsTrigger value="general" className="h-full rounded-none border-x border-t border-transparent data-[state=active]:bg-white data-[state=active]:border-[#D1D1CF] data-[state=active]:border-b-white -mb-[1px] px-6 text-sm font-bold">일반 (Basic)</TabsTrigger>
-                  <TabsTrigger value="advanced" className="h-full rounded-none border-x border-t border-transparent data-[state=active]:bg-white data-[state=active]:border-[#D1D1CF] data-[state=active]:border-b-white -mb-[1px] px-6 text-sm font-bold">심화 (Advanced)</TabsTrigger>
+                  <TabsTrigger value="general" className="h-full rounded-none border-x border-t border-transparent data-[state=active]:bg-white data-[state=active]:border-[#D1D1CF] data-[state=active]:border-b-white -mb-[1px] px-6 text-[14px] font-bold">일반 (Basic)</TabsTrigger>
+                  <TabsTrigger value="advanced" className="h-full rounded-none border-x border-t border-transparent data-[state=active]:bg-white data-[state=active]:border-[#D1D1CF] data-[state=active]:border-b-white -mb-[1px] px-6 text-[14px] font-normal">심화 (Advanced)</TabsTrigger>
                 </TabsList>
                 
                 <div className="grid grid-cols-12 bg-[#F9F9F8] border-b border-[#D1D1CF] text-[11px] font-bold uppercase text-[#666]">
@@ -976,11 +1068,11 @@ export default function App() {
                       {tempSaveStatus}
                     </motion.div>
                   )}
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 text-[12px]">
                     <Button 
                       variant="outline" 
                       size="sm" 
-                      className="h-8 rounded-none border-[#141414] text-[10px] font-bold px-3"
+                      className="h-8 rounded-none border-[#141414] text-[12px] font-bold px-3"
                       onClick={() => setIsPreviewDialogOpen(true)}
                     >
                       미리보기
@@ -988,7 +1080,7 @@ export default function App() {
                     <Button 
                       variant="outline" 
                       size="sm" 
-                      className="h-8 rounded-none border-[#141414] text-[10px] font-bold bg-slate-800 text-white hover:bg-slate-700 px-3"
+                      className="h-8 rounded-none border-[#141414] text-[12px] font-bold bg-slate-800 text-white hover:bg-slate-700 px-3"
                       onClick={handleTempSave}
                     >
                       임시 저장
@@ -1003,7 +1095,7 @@ export default function App() {
                           key={`page-${page}`}
                           variant={currentPage === page ? "default" : "outline"}
                           size="sm"
-                          className={`w-8 h-8 rounded-none border-[#141414] text-[11px] font-bold ${currentPage === page ? 'bg-[#141414] text-white' : 'bg-white'}`}
+                          className={`w-8 h-8 rounded-none border-[#141414] text-[12px] font-bold ${currentPage === page ? 'bg-[#141414] text-white' : 'bg-white'}`}
                           onClick={() => setCurrentPage(page)}
                         >
                           {page}
@@ -1121,160 +1213,251 @@ export default function App() {
                       className="flex-1"
                     >
                       <div className="space-y-4 px-6 py-6 pb-20">
-                            <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">문항제목</Label>
-                        <Input 
-                          className="rounded-none border-[#D1D1CF] h-8 text-sm" 
-                          value={selectedQuestion.title}
-                          onChange={(e) => setSelectedQuestion({...selectedQuestion, title: e.target.value})}
-                          placeholder="(가) 인물의 활동으로 옳은 것은? (2점)" 
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">키워드</Label>
-                        <Input 
-                          className="rounded-none border-[#D1D1CF] h-8 text-sm" 
-                          value={selectedQuestion.keywords.join(' ')}
-                          onChange={(e) => setSelectedQuestion({...selectedQuestion, keywords: e.target.value.split(' ')})}
-                          placeholder="#조선 #계보 #정치 #시대배경" 
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-[11px] font-bold">문항내용 (이미지 등록)</Label>
-                          <div className="flex gap-2">
-                            <Input 
-                              placeholder="이미지 경로를 입력하세요" 
-                              className="w-48 h-6 text-[10px] rounded-none border-[#D1D1CF]" 
-                              value={selectedQuestion.imageUrl}
-                              onChange={(e) => setSelectedQuestion({...selectedQuestion, imageUrl: e.target.value})}
-                            />
-                            <input 
-                              type="file"
-                              ref={qImageRef}
-                              className="hidden"
-                              accept="image/*"
-                              onChange={handleImageSelect}
-                            />
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="h-6 text-[10px] rounded-none border-[#141414] px-2"
-                              onClick={() => qImageRef.current?.click()}
-                            >
-                              찾아보기
-                            </Button>
-                          </div>
-                        </div>
-                        <div className="h-[160px] overflow-auto bg-[#EEE] rounded-none border border-[#D1D1CF] flex flex-col items-center justify-start text-slate-400 relative border-dashed p-2">
-                          {selectedQuestion.imageUrl ? (
-                            <img 
-                              src={selectedQuestion.imageUrl} 
-                              alt="Question" 
-                              className="max-w-full h-auto"
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : (
-                            <div className="flex-1 flex items-center justify-center text-[11px] text-[#999]">[이미지 없음]</div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 pt-2">
-                        <Label className="text-[11px] font-bold">선다형 문항 입력 (1~5번)</Label>
-                        <div className="space-y-2">
-                          {[1, 2, 3, 4, 5].map((num) => (
-                            <div key={`choice-input-${num}`} className="flex gap-2 items-center">
-                              <div 
-                                onClick={() => setSelectedQuestion({...selectedQuestion, answer: num})}
-                                className={`w-8 h-8 flex items-center justify-center cursor-pointer border-2 transition-all ${
-                                  selectedQuestion.answer === num 
-                                  ? 'bg-[#141414] border-[#141414] text-white' 
-                                  : 'bg-white border-[#D1D1CF] text-[#999] hover:border-[#141414]'
-                                }`}
-                              >
-                                {selectedQuestion.answer === num ? <Check className="w-4 h-4" /> : <span className="text-[11px] font-bold">{num}</span>}
+                            {/* 고정 정보 섹션 (Read Only) */}
+                            <div className="grid grid-cols-2 gap-4 p-3 bg-slate-900 text-white border-l-4 border-yellow-400">
+                              <div className="space-y-1">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">문제 ID (자동생성)</Label>
+                                <div className="text-sm font-mono font-bold">
+                                  {exams.find(e => e.id === selectedExamId)?.round.replace(/[^0-9]/g, '') || '00'}-
+                                  {activeTab === 'advanced' ? '심화' : '기본'}-
+                                  {selectedQuestion.number}
+                                </div>
                               </div>
+                              <div className="space-y-1">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">출제위원</Label>
+                                <div className="text-sm font-bold truncate">
+                                  {selectedQuestion.author || auth.currentUser?.displayName || '한능검 관리자'}
+                                </div>
+                              </div>
+                            </div>
+
+                            <Separator className="my-4" />
+
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">문항제목</Label>
                               <Input 
-                                className="flex-1 rounded-none border-[#D1D1CF] h-8 text-sm bg-white" 
-                                placeholder={`${num}번 선택지 내용을 입력하세요`}
-                                value={selectedQuestion.options?.[num-1] || ''}
-                                onChange={(e) => {
-                                  const newOptions = [...(selectedQuestion.options || ['', '', '', '', ''])];
-                                  newOptions[num-1] = e.target.value;
-                                  setSelectedQuestion({...selectedQuestion, options: newOptions});
-                                }}
+                                className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                value={selectedQuestion.title}
+                                onChange={(e) => setSelectedQuestion({...selectedQuestion, title: e.target.value})}
+                                placeholder="(가) 인물의 활동으로 옳은 것은?" 
                               />
                             </div>
-                          ))}
-                        </div>
-                      </div>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-bold">배점</Label>
-                          <Select 
-                            value={selectedQuestion ? String(selectedQuestion.score) : ""} 
-                            onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, score: parseInt(v)} : null)}
-                          >
-                            <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
-                              <SelectValue>
-                                {selectedQuestion?.score ? `${selectedQuestion.score}점` : ""}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent className="rounded-none">
-                              {[1,2,3,4,5].map(n => <SelectItem key={`score-opt-${n}`} value={String(n)}>{n}점</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-bold">정답률</Label>
-                          <div className="flex items-center gap-2">
-                            <Input 
-                              type="number" 
-                              className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm" 
-                              value={selectedQuestion.correctRate}
-                              onChange={(e) => setSelectedQuestion({...selectedQuestion, correctRate: parseInt(e.target.value)})}
-                            />
-                            <span className="text-sm font-bold">%</span>
-                          </div>
-                        </div>
-                      </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-[11px] font-bold">문항 이미지 등록</Label>
+                                <div className="flex gap-2">
+                                  <Input 
+                                    placeholder="이미지 경로" 
+                                    className="w-48 h-6 text-[10px] rounded-none border-[#D1D1CF]" 
+                                    value={selectedQuestion.imageUrl}
+                                    onChange={(e) => setSelectedQuestion({...selectedQuestion, imageUrl: e.target.value})}
+                                  />
+                                  <input 
+                                    type="file"
+                                    ref={qImageRef}
+                                    className="hidden"
+                                    accept="image/*"
+                                    onChange={handleImageSelect}
+                                  />
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="h-6 text-[10px] rounded-none border-[#141414] px-2"
+                                    onClick={() => qImageRef.current?.click()}
+                                  >
+                                    파일 선택
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="h-[140px] overflow-auto bg-[#F9F9F9] border border-[#D1D1CF] flex flex-col items-center justify-center relative border-dashed p-2">
+                                {selectedQuestion.imageUrl ? (
+                                  <img 
+                                    src={selectedQuestion.imageUrl} 
+                                    alt="Question" 
+                                    className="max-h-full w-auto object-contain"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <div className="text-[10px] text-[#999] italic">문항 이미지가 등록되지 않았습니다.</div>
+                                )}
+                              </div>
+                            </div>
 
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">문제유형</Label>
-                        <Select 
-                          value={selectedQuestion?.category || ""} 
-                          onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, category: v} : null)}
-                        >
-                          <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
-                            <SelectValue>
-                              {selectedQuestion?.category || ""}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent className="rounded-none">
-                            <SelectItem value="역사지식 이해">역사지식 이해</SelectItem>
-                            <SelectItem value="사료 분석 및 해석">사료 분석 및 해석</SelectItem>
-                            <SelectItem value="역사 상황 파악">역사 상황 파악</SelectItem>
-                            <SelectItem value="역사 탐구 설계 및 수행">역사 탐구 설계 및 수행</SelectItem>
-                            <SelectItem value="역사적 상상력 및 추론">역사적 상상력 및 추론</SelectItem>
-                            <SelectItem value="역사적 가치 판단 및 태도">역사적 가치 판단 및 태도</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">분야 (정치/경제/사회/문화...)</Label>
+                                <Select 
+                                  value={selectedQuestion?.field || ""} 
+                                  onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, field: v} : null)}
+                                >
+                                  <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
+                                    <SelectValue placeholder="분야 선택">
+                                      {selectedQuestion?.field || ""}
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-none">
+                                    {FIELDS.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">문제 유형 (역사지식 이해...)</Label>
+                                <Select 
+                                  value={selectedQuestion?.category || ""} 
+                                  onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, category: v} : null)}
+                                >
+                                  <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
+                                    <SelectValue placeholder="유형 선택">
+                                      {selectedQuestion?.category || ""}
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-none">
+                                    {QUESTION_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">출제 근거</Label>
+                              <Input 
+                                className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                value={selectedQuestion.source || ''}
+                                onChange={(e) => setSelectedQuestion({...selectedQuestion, source: e.target.value})}
+                                placeholder="예: 기출 60회 1번 응용" 
+                              />
+                            </div>
 
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">문제해설</Label>
-                        <Textarea 
-                          className="min-h-[80px] rounded-none border-[#D1D1CF] bg-white text-sm leading-relaxed" 
-                          placeholder="문제에 대한 상세 해설을 입력하세요..."
-                          value={selectedQuestion.explanation}
-                          onChange={(e) => setSelectedQuestion({...selectedQuestion, explanation: e.target.value})}
-                        />
-                      </div>
-                    </div>
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">키워드</Label>
+                              <Input 
+                                className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                value={selectedQuestion.keywords.join(' ')}
+                                onChange={(e) => setSelectedQuestion({...selectedQuestion, keywords: e.target.value.split(' ')})}
+                                placeholder="#조선 #계보 #정치 #시대배경" 
+                              />
+                            </div>
+
+
+                            <div className="grid grid-cols-3 gap-3">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">정답</Label>
+                                <Select 
+                                  value={selectedQuestion ? String(selectedQuestion.answer) : "1"} 
+                                  onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, answer: parseInt(v)} : null)}
+                                >
+                                  <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
+                                    <SelectValue>
+                                      {selectedQuestion?.answer ? `${selectedQuestion.answer}번` : "1번"}
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-none">
+                                    {[1, 2, 3, 4, 5].map(n => <SelectItem key={`ans-opt-${n}`} value={String(n)}>{n}번</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">배점</Label>
+                                <Select 
+                                  value={selectedQuestion ? String(selectedQuestion.score) : ""} 
+                                  onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, score: parseInt(v)} : null)}
+                                >
+                                  <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
+                                    <SelectValue>
+                                      {selectedQuestion?.score ? `${selectedQuestion.score}점` : ""}
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-none">
+                                    {[1,2,3,4,5].map(n => <SelectItem key={`score-opt-${n}`} value={String(n)}>{n}점</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">난이도</Label>
+                                <Select 
+                                  value={selectedQuestion?.difficulty || ""} 
+                                  onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, difficulty: v as any} : null)}
+                                >
+                                  <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
+                                    <SelectValue placeholder="선택">
+                                      {selectedQuestion?.difficulty || ""}
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-none">
+                                    {DIFFICULTIES.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">예상 정답률 (%)</Label>
+                                <Input 
+                                  type="number" 
+                                  className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                  value={selectedQuestion.expectedCorrectRate || 0}
+                                  onChange={(e) => setSelectedQuestion({...selectedQuestion, expectedCorrectRate: parseInt(e.target.value)})}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">실제 정답률 (%)</Label>
+                                <Input 
+                                  type="number" 
+                                  className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                  value={selectedQuestion.correctRate || 0}
+                                  onChange={(e) => setSelectedQuestion({...selectedQuestion, correctRate: parseInt(e.target.value)})}
+                                />
+                              </div>
+                            </div>
+
+
+
+                            <Separator className="my-4" />
+
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">문항 내용 (이미지/사료 설명 컨텐츠)</Label>
+                              <Textarea 
+                                className="min-h-[80px] rounded-none border-[#D1D1CF] bg-white text-xs leading-relaxed" 
+                                placeholder="이미지에 포함된 텍스트나 사료 내용을 입력하세요..."
+                                value={selectedQuestion.imageDescription || ''}
+                                onChange={(e) => setSelectedQuestion({...selectedQuestion, imageDescription: e.target.value})}
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">전맹자용 문항 구성</Label>
+                              <Textarea 
+                                className="min-h-[80px] rounded-none border-[#D1D1CF] bg-[#FDFDFD] text-xs leading-relaxed italic" 
+                                placeholder="시각 장애인을 위한 대체 텍스트 문항을 입력하세요..."
+                                value={selectedQuestion.accessibleQuestion || ''}
+                                onChange={(e) => setSelectedQuestion({...selectedQuestion, accessibleQuestion: e.target.value})}
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">정답 해설</Label>
+                              <Textarea 
+                                className="min-h-[100px] rounded-none border-[#D1D1CF] bg-white text-sm leading-relaxed" 
+                                placeholder="오답 방지 및 정답에 대한 상세 해설을 입력하세요..."
+                                value={selectedQuestion.explanation}
+                                onChange={(e) => setSelectedQuestion({...selectedQuestion, explanation: e.target.value})}
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold">비고 (특이사항)</Label>
+                              <Textarea 
+                                className="min-h-[60px] rounded-none border-[#D1D1CF] bg-slate-50 text-[11px] leading-relaxed" 
+                                placeholder="검토 의견이나 기타 관리용 메모를 입력하세요..."
+                                value={selectedQuestion.etc || ''}
+                                onChange={(e) => setSelectedQuestion({...selectedQuestion, etc: e.target.value})}
+                              />
+                            </div>
+                        </div>
+
 
                     <div className="border-t border-[#D1D1CF] p-4 bg-slate-50 flex items-center justify-between gap-4"> 
                       <Button 
@@ -1333,7 +1516,7 @@ export default function App() {
                 setCurrentPage(page);
               }}
             />
-          ) : (
+          ) : activeMenu === 'user' ? (
             <div className="flex-1 overflow-hidden p-2">
               <UserView 
                 exams={visibleExams}
@@ -1343,6 +1526,10 @@ export default function App() {
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
               />
+            </div>
+          ) : (
+            <div className="flex-1 overflow-hidden p-2">
+              <SingleQuestionView exams={visibleExams} />
             </div>
           )}
         </div>
