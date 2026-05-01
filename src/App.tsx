@@ -19,7 +19,8 @@ import {
   Sparkles,
   Eye,
   EyeOff,
-  BarChart3
+  BarChart3,
+  Activity
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -33,7 +34,8 @@ import {
   doc, 
   deleteDoc,
   serverTimestamp,
-  orderBy
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
 import { Exam, Question } from './types';
@@ -78,6 +80,7 @@ export default function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [newExamRound, setNewExamRound] = useState('');
   const [selectedLevels, setSelectedLevels] = useState<string[]>(['심화']);
   const [tempSaveStatus, setTempSaveStatus] = useState<string | null>(null);
@@ -97,17 +100,28 @@ export default function App() {
       .slice(0, 15);
   }, [exams]);
 
+  // Helper for Firestore Errors
+  const handleFirestoreError = (error: any, operation: string) => {
+    console.error(`Firestore ${operation} Error:`, error);
+    if (error.code === 'resource-exhausted' || error.message?.includes('Quota exceeded')) {
+      setQuotaExceeded(true);
+    }
+  };
+
   // Exams Listener
   useEffect(() => {
     setCurrentPage(1);
-    const q = query(collection(db, 'exams'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const examData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Exam));
-      setExams(examData);
-      if (examData.length > 0 && !selectedExamId) {
-        setSelectedExamId(examData[0].id);
-      }
-    });
+    const q = query(collection(db, 'exams'), orderBy('createdAt', 'desc'), limit(100)); // Limit exams to 100
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        const examData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Exam));
+        setExams(examData);
+        if (examData.length > 0 && !selectedExamId) {
+          setSelectedExamId(examData[0].id);
+        }
+      },
+      (error) => handleFirestoreError(error, 'Exams Listener')
+    );
     return () => unsubscribe();
   }, [selectedExamId]);
 
@@ -118,10 +132,11 @@ export default function App() {
 
     let q;
     if (activeMenu === 'stats') {
-      // In stats mode, fetch all questions to enable cross-exam filtering
-      q = query(collection(db, 'questions'), orderBy('number', 'asc'));
+      // In stats mode, we still query by examId if possible, or limit results to save quota
+      // If we need cross-exam stats, we should be careful. 
+      // For now, let's keep it limited to current selection or a reasonable max
+      q = query(collection(db, 'questions'), limit(300)); 
     } else {
-      // In other modes, fetch only for selected exam and tab
       q = query(
         collection(db, 'questions'), 
         where('examId', '==', selectedExamId),
@@ -129,14 +144,17 @@ export default function App() {
       );
     }
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const questionData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question));
-      if (activeMenu === 'stats') {
-        setQuestions(questionData);
-      } else {
-        setQuestions([...questionData].sort((a, b) => a.number - b.number));
-      }
-    });
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        const questionData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question));
+        if (activeMenu === 'stats') {
+          setQuestions(questionData);
+        } else {
+          setQuestions([...questionData].sort((a, b) => a.number - b.number));
+        }
+      },
+      (error) => handleFirestoreError(error, 'Questions Listener')
+    );
     return () => unsubscribe();
   }, [selectedExamId, activeTab, activeMenu]);
 
@@ -178,7 +196,7 @@ export default function App() {
       setNewExamRound('');
       setSelectedLevels(['심화']);
     } catch (error) {
-      console.error('Error creating exam:', error);
+      handleFirestoreError(error, 'Create Exam');
     }
   };
 
@@ -188,7 +206,7 @@ export default function App() {
         isVisible: !currentStatus
       });
     } catch (error) {
-      console.error("Error toggling visibility:", error);
+      handleFirestoreError(error, 'Toggle Visibility');
     }
   };
 
@@ -351,7 +369,7 @@ export default function App() {
         setSelectedExamId(exams.length > 0 ? (exams.find(e => e.id !== id)?.id || '') : '');
       }
     } catch (error) {
-      console.error("Error deleting exam:", error);
+      handleFirestoreError(error, 'Delete Exam');
       alert('회차 삭제 중 오류가 발생했습니다.');
     }
   };
@@ -474,7 +492,7 @@ export default function App() {
       alert(`${toAdd.length}개의 더미 문항이 생성되었습니다.`);
     } catch (error) {
       setIsUploading(false);
-      console.error('Error seeding dummy data:', error);
+      handleFirestoreError(error, 'Seed Dummy Data');
       alert('데이터 생성 중 오류가 발생했습니다.');
     }
   };
@@ -526,7 +544,7 @@ export default function App() {
       alert(`${count}개 문항의 답지반응률 더미 데이터가 생성되었습니다.`);
     } catch (error) {
       setIsUploading(false);
-      console.error('Error generating response rates:', error);
+      handleFirestoreError(error, 'Generate Response Rates');
       alert('데이터 생성 중 오류가 발생했습니다.');
     }
   };
@@ -596,8 +614,8 @@ export default function App() {
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error) {
       setIsUploading(false);
-      console.error('Error parsing Excel:', error);
-      alert('엑셀 파일 파싱 중 오류가 발생했습니다.');
+      handleFirestoreError(error, 'Excel Upload');
+      alert('엑셀 파일 파싱 또는 업로드 중 오류가 발생했습니다.');
     }
   };
 
@@ -689,7 +707,7 @@ export default function App() {
       }
       setSelectedQuestion(null);
     } catch (error: any) {
-      console.error('Error saving question:', error);
+      handleFirestoreError(error, 'Save Question');
       alert(`저장 중 오류가 발생했습니다: ${error.message || '알 수 없는 오류'}`);
     }
   };
@@ -713,13 +731,42 @@ export default function App() {
       setSelectedQuestion(null);
       setIsDeleteDialogOpen(false);
     } catch (error) {
-      console.error('Error deleting question:', error);
+      handleFirestoreError(error, 'Delete Question');
       setIsDeleteDialogOpen(false);
     }
   };
 
   return (
     <div className="flex h-screen bg-[#F0F0EE] font-sans overflow-hidden">
+      {/* Quota Exceeded Overlay */}
+      <AnimatePresence>
+        {quotaExceeded && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md"
+          >
+            <div className="bg-white p-10 rounded-none border-4 border-red-600 shadow-[15px_15px_0_rgba(0,0,0,1)] max-w-[500px] text-center">
+              <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Activity className="w-10 h-10 text-red-600" />
+              </div>
+              <h2 className="text-2xl font-black mb-4 uppercase tracking-tighter">Firestore 할당량 초과</h2>
+              <p className="text-slate-600 leading-relaxed mb-8">
+                일일 무료 데이터 읽기 한도가 모두 소모되었습니다.<br />
+                대기 중인 리스너가 중단되었습니다.<br />
+                <span className="font-bold text-slate-900">내일(UTC 00:00) 초기화된 후 다시 이용하실 수 있습니다.</span>
+              </p>
+              <Button 
+                onClick={() => window.location.reload()}
+                className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-black rounded-none shadow-[5px_5px_0_rgba(0,0,0,0.2)]"
+              >
+                페이지 새로고침
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Upload Progress Overlay */}
       <AnimatePresence>
         {isUploading && (
@@ -943,11 +990,25 @@ export default function App() {
               {selectedExamId && (
                 <div className="flex items-center gap-3 px-4 py-1.5 bg-[#141414] text-white border-l-4 border-yellow-400">
                   <span className="text-[10px] font-black tracking-widest opacity-50 uppercase">편집 중</span>
-                  <span className="text-[14px] font-bold tracking-tight">
+                  <span className="text-[14px] font-bold tracking-tight flex items-center gap-2">
                     {(() => {
                       const exam = exams.find(e => e.id === selectedExamId);
                       if (!exam) return "회차 선택됨";
-                      return (exam.round.includes('회') ? exam.round : `${exam.round}회`) + " 한국사능력검정시험";
+                      const examName = (exam.round.includes('회') ? exam.round : `${exam.round}회`) + " 한국사능력검정시험";
+                      const isLatest = exams.sort((a,b) => {
+                        const rA = parseInt(a.round.replace(/[^0-9]/g, '')) || 0;
+                        const rB = parseInt(b.round.replace(/[^0-9]/g, '')) || 0;
+                        return rB - rA;
+                      })[0]?.id === exam.id;
+                      
+                      return (
+                        <>
+                          {examName}
+                          {isLatest && (
+                            <span className="text-[9px] bg-yellow-400 text-black px-1 font-black uppercase rounded-xs">최신</span>
+                          )}
+                        </>
+                      );
                     })()}
                   </span>
                 </div>
@@ -1104,7 +1165,31 @@ export default function App() {
                     })}
                   </div>
 
-                  <Button size="sm" className="h-8 rounded-none bg-[#141414] text-white text-[10px] font-bold px-4">기출문제 게시</Button>
+                  <Button 
+                    size="sm" 
+                    className="h-8 rounded-none bg-[#141414] text-white text-[10px] font-bold px-4 hover:bg-slate-800"
+                    onClick={async () => {
+                      if (selectedExamId) {
+                        try {
+                          await updateDoc(doc(db, 'exams', selectedExamId), {
+                            status: 'published',
+                            updatedAt: serverTimestamp()
+                          });
+                          handleTempSave();
+                          setTimeout(() => {
+                            setActiveMenu('rounds');
+                          }, 1000);
+                        } catch (error) {
+                          console.error("Error publishing exam:", error);
+                          alert("게시 중 오류가 발생했습니다.");
+                        }
+                      } else {
+                        alert("회차를 선택해주세요.");
+                      }
+                    }}
+                  >
+                    기출문제 게시
+                  </Button>
                 </div>
               </Tabs>
             </Card>

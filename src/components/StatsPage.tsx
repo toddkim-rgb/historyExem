@@ -1491,7 +1491,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                             <div className="space-y-3 pt-6 border-t border-slate-200">
                               <h3 className="flex items-center gap-2 text-sm font-black text-slate-900 uppercase">
                                 <Activity className="w-4 h-4 text-indigo-500" />
-                                평정 간극 (답지별)
+                                답지반응률 (요약)
                               </h3>
                               <div className="bg-white p-3 border border-slate-100">
                                 {selectedQuestion.ratingGap ? (
@@ -1520,9 +1520,12 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
 
                             {selectedQuestion.options && selectedQuestion.options.length > 0 && (
                               <div className="space-y-4 pt-6 border-t border-slate-200">
-                                <h3 className="flex items-center gap-2 text-sm font-black text-slate-900 uppercase">
-                                  <Activity className="w-4 h-4 text-indigo-500" />
-                                  답지반응률
+                                <h3 className="flex items-center justify-between text-sm font-black text-slate-900 uppercase">
+                                  <div className="flex items-center gap-2">
+                                    <Activity className="w-4 h-4 text-indigo-500" />
+                                    답지반응률
+                                  </div>
+                                  <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-none font-bold">정답: {selectedQuestion.answer}번</span>
                                 </h3>
                                 <div className="bg-white p-0 border border-slate-100 overflow-hidden">
                                   <table className="w-full text-xs">
