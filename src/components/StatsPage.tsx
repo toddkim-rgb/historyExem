@@ -44,7 +44,7 @@ import {
   Loader2,
   Image
 } from 'lucide-react';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { 
   Dialog,
@@ -62,15 +62,23 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-// Helper to convert ArrayBuffer to Base64 for jsPDF font embedding
-const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return window.btoa(binary);
+// Helper to convert ArrayBuffer to Base64 for jsPDF font embedding using a robust method
+const arrayBufferToBase64 = (buffer: ArrayBuffer): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    try {
+      const blob = new Blob([buffer], { type: 'application/octet-stream' });
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const base64 = dataUrl.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error('Failed to read font buffer'));
+      reader.readAsDataURL(blob);
+    } catch (err) {
+      reject(err);
+    }
+  });
 };
 import { Separator } from '@/components/ui/separator';
 
@@ -204,23 +212,35 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
   };
 
   const handleDownloadPDF = async () => {
+    if (displayQuestions.length === 0) {
+      alert('다운로드할 데이터가 없습니다.');
+      return;
+    }
     setIsDownloading(true);
     try {
       const doc = new jsPDF('l', 'mm', 'a4');
       
       // Fetch NanumGothic font to support Korean characters in PDF
-      // Using a reliable CDN for the font file
+      // Using jsDelivr for reliable CORS-enabled font file access
       const fontUrl = 'https://cdn.jsdelivr.net/gh/googlefonts/nanumgothic@main/fonts/NanumGothic-Regular.ttf';
-      const response = await fetch(fontUrl);
-      if (!response.ok) throw new Error('Font download failed');
+      let fontBase64 = '';
+      let isFontLoaded = false;
       
-      const fontBuffer = await response.arrayBuffer();
-      const fontBase64 = arrayBufferToBase64(fontBuffer);
-      
-      // Add font to jsPDF
-      doc.addFileToVFS('NanumGothic-Regular.ttf', fontBase64);
-      doc.addFont('NanumGothic-Regular.ttf', 'NanumGothic', 'normal');
-      doc.setFont('NanumGothic');
+      try {
+        const response = await fetch(fontUrl);
+        if (!response.ok) throw new Error('Font download failed');
+        const fontBuffer = await response.arrayBuffer();
+        const fontBase64 = await arrayBufferToBase64(fontBuffer);
+        
+        // Add font to jsPDF
+        doc.addFileToVFS('NanumGothic-Regular.ttf', fontBase64);
+        doc.addFont('NanumGothic-Regular.ttf', 'NanumGothic', 'normal');
+        doc.setFont('NanumGothic');
+        isFontLoaded = true;
+      } catch (fontError) {
+        console.error('NanumGothic font loading failed:', fontError);
+        // Fallback: jsPDF will use its default font (Korean will be broken in fallback)
+      }
 
       const tableColumn = ["회차", "번호", "급수", "시대", "문항 제목", "예상 정답률", "실제 정답률", "평정 간극", "유형", "난이도", "배점"];
       const tableRows: any[] = [];
@@ -247,8 +267,9 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
         tableRows.push(rowData);
       });
 
-      // Render Title with Korean Font
+      // Render Title
       doc.setFontSize(18);
+      if (isFontLoaded) doc.setFont('NanumGothic', 'normal');
       doc.text("한국사능력검정시험 문항 통계 분석 보고서", 14, 15);
       doc.setFontSize(9);
       doc.text(`생성일시: ${new Date().toLocaleString('ko-KR')}`, 14, 22);
@@ -258,13 +279,13 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
         body: tableRows,
         startY: 28,
         styles: { 
-          font: 'NanumGothic', 
+          font: isFontLoaded ? 'NanumGothic' : 'helvetica', 
           fontStyle: 'normal',
           fontSize: 8,
           cellPadding: 2
         },
         headStyles: { 
-          font: 'NanumGothic', 
+          font: isFontLoaded ? 'NanumGothic' : 'helvetica', 
           fontStyle: 'normal',
           fillColor: [30, 41, 59],
           textColor: [255, 255, 255],
