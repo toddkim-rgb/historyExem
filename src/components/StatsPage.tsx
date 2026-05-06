@@ -40,12 +40,12 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  FileSpreadsheet,
   X,
   Loader2,
   Image
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 import { 
   Dialog,
   DialogContent,
@@ -61,27 +61,9 @@ import { auth } from '../lib/firebase';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-
-// Helper to convert ArrayBuffer to Base64 for jsPDF font embedding using a robust method
-const arrayBufferToBase64 = (buffer: ArrayBuffer): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    try {
-      const blob = new Blob([buffer], { type: 'application/octet-stream' });
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const dataUrl = e.target?.result as string;
-        const base64 = dataUrl.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = () => reject(new Error('Failed to read font buffer'));
-      reader.readAsDataURL(blob);
-    } catch (err) {
-      reject(err);
-    }
-  });
-};
 import { Separator } from '@/components/ui/separator';
 
+// StatsPage Component
 interface StatsPageProps {
   exams: Exam[];
   selectedExamId: string;
@@ -211,104 +193,58 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
     });
   };
 
-  const handleDownloadPDF = async () => {
+  const handleDownloadExcel = () => {
     if (displayQuestions.length === 0) {
       alert('다운로드할 데이터가 없습니다.');
       return;
     }
     setIsDownloading(true);
     try {
-      const doc = new jsPDF('l', 'mm', 'a4');
-      
-      // Fetch NanumGothic font to support Korean characters in PDF
-      // Using jsDelivr for reliable CORS-enabled font file access
-      const fontUrl = 'https://cdn.jsdelivr.net/gh/googlefonts/nanumgothic@main/fonts/NanumGothic-Regular.ttf';
-      let fontBase64 = '';
-      let isFontLoaded = false;
-      
-      try {
-        const response = await fetch(fontUrl);
-        if (!response.ok) throw new Error('Font download failed');
-        const fontBuffer = await response.arrayBuffer();
-        const fontBase64 = await arrayBufferToBase64(fontBuffer);
-        
-        // Add font to jsPDF
-        doc.addFileToVFS('NanumGothic-Regular.ttf', fontBase64);
-        doc.addFont('NanumGothic-Regular.ttf', 'NanumGothic', 'normal');
-        doc.setFont('NanumGothic');
-        isFontLoaded = true;
-      } catch (fontError) {
-        console.error('NanumGothic font loading failed:', fontError);
-        // Fallback: jsPDF will use its default font (Korean will be broken in fallback)
-      }
-
-      const tableColumn = ["회차", "번호", "급수", "시대", "문항 제목", "예상 정답률", "실제 정답률", "평정 간극", "유형", "난이도", "배점"];
-      const tableRows: any[] = [];
-
-      displayQuestions.forEach(q => {
+      const excelData = displayQuestions.map(q => {
         const expected = 75 + (q.number % 10) - (q.difficulty === '상' ? 15 : q.difficulty === '하' ? -10 : 0);
-        const gapValue = q.correctRate - expected;
+        const actualGap = q.correctRate - expected;
         const qExam = exams.find(e => e.id === q.examId);
-        const round = qExam ? qExam.round.replace(/[^0-9]/g, '') : '-';
         
-        const rowData = [
-          round,
-          q.number,
-          q.type === 'advanced' ? '심화' : '기본',
-          q.era,
-          q.title,
-          `${expected}%`,
-          `${q.correctRate}%`,
-          `${gapValue > 0 ? '+' : ''}${gapValue}%`,
-          q.category,
-          q.difficulty,
-          q.score
-        ];
-        tableRows.push(rowData);
+        return {
+          "회차": qExam ? qExam.round.replace(/[^0-9]/g, '') : '-',
+          "번호": q.number,
+          "급수": q.type === 'advanced' ? '심화' : '기본',
+          "시대": q.era,
+          "문항 제목": q.title,
+          "예상 정답률": `${expected}%`,
+          "실제 정답률": `${q.correctRate}%`,
+          "평정 간극": `${actualGap > 0 ? '+' : ''}${actualGap}%`,
+          "유형": q.category,
+          "난이도": q.difficulty,
+          "배점": q.score
+        };
       });
 
-      // Render Title
-      doc.setFontSize(18);
-      if (isFontLoaded) doc.setFont('NanumGothic', 'normal');
-      doc.text("한국사능력검정시험 문항 통계 분석 보고서", 14, 15);
-      doc.setFontSize(9);
-      doc.text(`생성일시: ${new Date().toLocaleString('ko-KR')}`, 14, 22);
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "문항 통계");
 
-      autoTable(doc, {
-        head: [tableColumn],
-        body: tableRows,
-        startY: 28,
-        styles: { 
-          font: isFontLoaded ? 'NanumGothic' : 'helvetica', 
-          fontStyle: 'normal',
-          fontSize: 8,
-          cellPadding: 2
-        },
-        headStyles: { 
-          font: isFontLoaded ? 'NanumGothic' : 'helvetica', 
-          fontStyle: 'normal',
-          fillColor: [30, 41, 59],
-          textColor: [255, 255, 255],
-          halign: 'center'
-        },
-        columnStyles: {
-          4: { cellWidth: 'auto' }, // Title column
-          0: { halign: 'center' },
-          1: { halign: 'center' },
-          2: { halign: 'center' },
-          3: { halign: 'center' },
-          5: { halign: 'center' },
-          6: { halign: 'center' },
-          7: { halign: 'center' },
-          9: { halign: 'center' },
-          10: { halign: 'center' }
-        }
-      });
+      // Set column widths
+      const wscols = [
+        {wch: 8},  // 회차
+        {wch: 8},  // 번호
+        {wch: 8},  // 급수
+        {wch: 10}, // 시대
+        {wch: 40}, // 문항 제목
+        {wch: 12}, // 예상 정답률
+        {wch: 12}, // 실제 정답률
+        {wch: 10}, // 평정 간극
+        {wch: 25}, // 유형
+        {wch: 8},  // 난이도
+        {wch: 8}   // 배점
+      ];
+      worksheet['!cols'] = wscols;
 
-      doc.save(`한능검_문항통계_${new Date().getTime()}.pdf`);
+      const date = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(workbook, `한능검_문항통계_${date}.xlsx`);
     } catch (error) {
-      console.error('PDF generation failed:', error);
-      alert('PDF 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+      console.error('Excel export failed:', error);
+      alert('엑셀 파일 생성 중 오류가 발생했습니다.');
     } finally {
       setIsDownloading(false);
     }
@@ -1020,9 +956,9 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                       <Button 
                         size="sm" 
                         variant="outline" 
-                        onClick={handleDownloadPDF}
+                        onClick={handleDownloadExcel}
                         disabled={isDownloading}
-                        className="h-7 text-[10px] font-bold border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 flex items-center gap-1.5 min-w-[100px]"
+                        className="h-7 text-[10px] font-bold border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 flex items-center gap-1.5 min-w-[100px]"
                       >
                         {isDownloading ? (
                           <>
@@ -1031,8 +967,8 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                           </>
                         ) : (
                           <>
-                            <Download className="w-3 h-3" />
-                            PDF 다운로드
+                            <FileSpreadsheet className="w-3 h-3" />
+                            엑셀 다운로드
                           </>
                         )}
                       </Button>
