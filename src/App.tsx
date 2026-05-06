@@ -1056,7 +1056,6 @@ export default function App() {
                 onChange={handleExcelUpload}
               />
               <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold" onClick={seedDummyData}>더미 문항 생성</Button>
-              <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold" onClick={generateResponseRates}>반응률 더미 생성</Button>
               <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold gap-2" onClick={() => fileInputRef.current?.click()}>
                 <Upload className="w-3.5 h-3.5" /> 엑셀 업로드
               </Button>

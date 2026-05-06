@@ -117,10 +117,38 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
   const [isQuestionDialogOpen, setIsQuestionDialogOpen] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState<'advanced' | 'basic'>('advanced');
 
   const currentExam = useMemo(() => {
     return exams.find(e => e.id === (selectedQuestion?.examId || selectedExamId));
   }, [exams, selectedExamId, selectedQuestion]);
+
+  // Sync selectedLevel when currentExam changes if they don't match
+  React.useEffect(() => {
+    if (currentExam && currentExam.grade !== selectedLevel) {
+      setSelectedLevel(currentExam.grade as 'advanced' | 'basic');
+    }
+  }, [currentExam]);
+
+  const filteredExams = useMemo(() => {
+    return [...exams]
+      .filter(e => e.grade === selectedLevel)
+      .sort((a, b) => {
+        const rA = parseInt(a.round.replace(/[^0-9]/g, '')) || 0;
+        const rB = parseInt(b.round.replace(/[^0-9]/g, '')) || 0;
+        return rB - rA; // 최신 회차 우선
+      });
+  }, [exams, selectedLevel]);
+
+  // Auto-select first exam when level changes or filtered exams change
+  React.useEffect(() => {
+    if (filteredExams.length > 0) {
+      const isCurrentExamInFiltered = filteredExams.some(e => e.id === selectedExamId);
+      if (!isCurrentExamInFiltered) {
+        onExamChange(filteredExams[0].id);
+      }
+    }
+  }, [selectedLevel, filteredExams, selectedExamId, onExamChange]);
 
   const handleQuestionClick = (q: Question) => {
     setSelectedQuestion(q);
@@ -485,7 +513,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                     variant="ghost" 
                     size="sm" 
                     onClick={() => setShowDetails(false)}
-                    className="h-6 text-[10px] font-bold text-slate-500 hover:text-slate-900 flex items-center gap-1 px-3 border border-slate-200"
+                    className="h-6 text-[10px] font-bold text-slate-500 hover:text-slate-900 flex items-center gap-1 px-3 border border-slate-200 bg-white"
                   >
                     <RotateCcw className="w-2.5 h-2.5" />
                     대시보드로 돌아가기
@@ -717,6 +745,86 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
               </div>
             </CardContent>
           </Card>
+
+          {/* 회차 정보 및 회차 선택 영역 */}
+          {!showDetails && (
+            <Card className="rounded-none border-0 shadow-sm bg-white mt-0 mb-[8.25px]">
+              <CardHeader className="py-2 px-6 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-[12px] font-black flex items-center gap-2 text-slate-700">
+                    <Activity className="w-3.5 h-3.5 text-emerald-600" />
+                    분석 대상 회차 선택
+                  </CardTitle>
+                  <div className="text-[10px] font-bold text-slate-400">
+                    등록된 전체 회차: <span className="text-slate-900">{exams.length}개</span>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="py-0 px-6 flex flex-wrap items-center gap-4 min-h-[50px]">
+                {/* Level Selector */}
+                <div className="flex bg-slate-100 p-0.5 rounded-sm">
+                  <button
+                    onClick={() => setSelectedLevel('advanced')}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-black transition-all",
+                      selectedLevel === 'advanced' 
+                        ? "bg-white text-indigo-600 shadow-sm" 
+                        : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    심화
+                  </button>
+                  <button
+                    onClick={() => setSelectedLevel('basic')}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-black transition-all",
+                      selectedLevel === 'basic' 
+                        ? "bg-white text-indigo-600 shadow-sm" 
+                        : "text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    기본
+                  </button>
+                </div>
+
+                <div className="w-full sm:w-[220px]">
+                  <Select value={selectedExamId} onValueChange={onExamChange}>
+                    <SelectTrigger className="h-8 rounded-none border-slate-200 text-[11px] bg-white font-bold focus:ring-0">
+                      <SelectValue placeholder="회차 선택" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-none border-slate-200 shadow-xl max-h-[350px]">
+                      {filteredExams.map(exam => (
+                        <SelectItem key={exam.id} value={exam.id} className="text-[11px] font-medium py-2.5 cursor-pointer focus:bg-indigo-50 border-b border-slate-50 last:border-0">
+                          <span className="block truncate">
+                            {exam.round.includes('회') ? exam.round : `${exam.round}회`} 한국사능력검정시험
+                          </span>
+                        </SelectItem>
+                      ))}
+                      {filteredExams.length === 0 && (
+                        <div className="p-4 text-center text-[10px] text-slate-400">등록된 회차가 없습니다.</div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {currentExam ? (
+                  <div className="flex items-center gap-3 px-3 py-1.5 bg-indigo-50/50 border border-indigo-100/50 rounded-sm">
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter leading-tight">선택 회차</span>
+                      <span className="text-[12px] font-black text-indigo-700 leading-tight whitespace-nowrap">{currentExam.round}</span>
+                    </div>
+                    <div className="h-5 w-[1px] bg-indigo-200/50" />
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter leading-tight">시험 급수</span>
+                      <span className="text-[10px] font-bold text-slate-600 leading-tight">{currentExam.grade === 'advanced' ? '심화' : '기본'}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[10px] font-bold text-slate-400">분석 대상 회차를 선택해주세요.</div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {!showDetails ? (
             <>
