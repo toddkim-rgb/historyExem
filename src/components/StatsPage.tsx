@@ -43,7 +43,9 @@ import {
   FileSpreadsheet,
   X,
   Loader2,
-  Image
+  Image as ImageIcon,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { 
@@ -762,14 +764,14 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
               </CardHeader>
               <CardContent className="py-0 px-6 flex flex-wrap items-center gap-4 min-h-[50px]">
                 {/* Level Selector */}
-                <div className="flex bg-slate-100 p-0.5 rounded-sm">
+                <div className="flex bg-slate-100 p-1 rounded-sm">
                   <button
                     onClick={() => setSelectedLevel('advanced')}
                     className={cn(
-                      "px-3 py-1 text-[10px] font-black transition-all",
+                      "px-4 py-1.5 text-[10px] font-black transition-all rounded-sm",
                       selectedLevel === 'advanced' 
-                        ? "bg-white text-indigo-600 shadow-sm" 
-                        : "text-slate-400 hover:text-slate-600"
+                        ? "bg-[#141414] text-white shadow-md" 
+                        : "text-slate-400 hover:text-slate-600 hover:bg-slate-200"
                     )}
                   >
                     심화
@@ -777,31 +779,37 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   <button
                     onClick={() => setSelectedLevel('basic')}
                     className={cn(
-                      "px-3 py-1 text-[10px] font-black transition-all",
+                      "px-4 py-1.5 text-[10px] font-black transition-all rounded-sm",
                       selectedLevel === 'basic' 
-                        ? "bg-white text-indigo-600 shadow-sm" 
-                        : "text-slate-400 hover:text-slate-600"
+                        ? "bg-[#141414] text-white shadow-md" 
+                        : "text-slate-400 hover:text-slate-600 hover:bg-slate-200"
                     )}
                   >
                     기본
                   </button>
                 </div>
 
-                <div className="w-full sm:w-[220px]">
+                <div className="w-full sm:w-[260px]">
                   <Select value={selectedExamId} onValueChange={onExamChange}>
-                    <SelectTrigger className="h-8 rounded-none border-slate-200 text-[11px] bg-white font-bold focus:ring-0">
-                      <SelectValue placeholder="회차 선택" />
+                    <SelectTrigger className="h-9 rounded-none border-slate-300 text-[11px] bg-white font-black focus:ring-1 focus:ring-indigo-500">
+                      <SelectValue placeholder="회차를 선택해주세요" />
                     </SelectTrigger>
-                    <SelectContent className="rounded-none border-slate-200 shadow-xl max-h-[350px]">
-                      {filteredExams.map(exam => (
-                        <SelectItem key={exam.id} value={exam.id} className="text-[11px] font-medium py-2.5 cursor-pointer focus:bg-indigo-50 border-b border-slate-50 last:border-0">
-                          <span className="block truncate">
-                            {exam.round.includes('회') ? exam.round : `${exam.round}회`} 한국사능력검정시험
-                          </span>
-                        </SelectItem>
-                      ))}
+                    <SelectContent position="popper" sideOffset={4} className="rounded-none border-slate-300 shadow-2xl max-h-[400px]">
+                      {filteredExams.map(exam => {
+                        const roundNum = exam.round.replace(/[^0-9]/g, '');
+                        return (
+                          <SelectItem key={exam.id} value={exam.id} className="text-[11px] font-bold py-3 cursor-pointer focus:bg-indigo-50 border-b border-slate-100 last:border-0">
+                            <div className="flex items-center gap-2">
+                              <span className="w-8 h-5 flex items-center justify-center bg-indigo-600 text-white text-[10px] font-black rounded-sm">
+                                {roundNum}회
+                              </span>
+                              <span className="truncate font-bold text-slate-800">한국사능력검정시험 {selectedLevel === 'advanced' ? '심화' : '기본'}</span>
+                            </div>
+                          </SelectItem>
+                        );
+                      })}
                       {filteredExams.length === 0 && (
-                        <div className="p-4 text-center text-[10px] text-slate-400">등록된 회차가 없습니다.</div>
+                        <div className="p-6 text-center text-[11px] font-bold text-slate-400">등록된 {selectedLevel === 'advanced' ? '심화' : '기본'} 회차가 없습니다.</div>
                       )}
                     </SelectContent>
                   </Select>
@@ -810,12 +818,12 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                 {currentExam ? (
                   <div className="flex items-center gap-3 px-3 py-1.5 bg-indigo-50/50 border border-indigo-100/50 rounded-sm">
                     <div className="flex flex-col">
-                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter leading-tight">선택 회차</span>
+                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter leading-tight">회차</span>
                       <span className="text-[12px] font-black text-indigo-700 leading-tight whitespace-nowrap">{currentExam.round}</span>
                     </div>
                     <div className="h-5 w-[1px] bg-indigo-200/50" />
                     <div className="flex flex-col">
-                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter leading-tight">시험 급수</span>
+                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter leading-tight">급수</span>
                       <span className="text-[10px] font-bold text-slate-600 leading-tight">{currentExam.grade === 'advanced' ? '심화' : '기본'}</span>
                     </div>
                   </div>
@@ -1653,7 +1661,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
 
                             <div className="space-y-4 pt-6 border-t border-slate-200">
                                 <h3 className="flex items-center gap-2 text-sm font-black text-slate-900 uppercase">
-                                  <Image className="w-4 h-4 text-indigo-500" />
+                                  <ImageIcon className="w-4 h-4 text-indigo-500" />
                                   문항 내용 (이미지 설명)
                                 </h3>
                                 <div className="bg-indigo-50 p-4 border border-indigo-100 text-indigo-900 text-xs leading-relaxed font-medium">
@@ -1758,6 +1766,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
           </div>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 };

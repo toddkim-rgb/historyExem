@@ -132,7 +132,7 @@ export const UserView: React.FC<UserViewProps> = ({
               <SelectContent className="rounded-none">
                 {exams.map((exam) => (
                   <SelectItem key={exam.id} value={exam.id} className="text-[11px]">
-                    {exam.round.includes('회') ? exam.round : `${exam.round}회`} 한국사능력검정시험
+                    {exam.round} 한국사능력검정시험
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -204,9 +204,15 @@ export const UserView: React.FC<UserViewProps> = ({
                   <Play className="w-8 h-8 text-[#141414] fill-current ml-1" />
                 </div>
                 <h3 className="text-2xl font-black mb-2 uppercase tracking-tighter">모의고사 풀기</h3>
-                <p className="text-white/60 text-xs mb-8 font-bold uppercase tracking-widest">
-                  {exams.find(e => e.id === selectedExamId)?.round}회 | {activeTab === 'advanced' ? '심화' : '기본'}
-                </p>
+                <div className="space-y-1 mb-8">
+                  <p className="text-white/60 text-[10px] font-bold uppercase tracking-[0.2em]">
+                    {exams.find(e => e.id === selectedExamId)?.round} | {activeTab === 'advanced' ? '심화' : '기본'}
+                  </p>
+                  <p className="text-rose-400 text-[10px] font-black animate-pulse flex items-center justify-center gap-1.5">
+                    <Clock className="w-3 h-3" />
+                    응시와 동시에 시간이 측정됩니다.
+                  </p>
+                </div>
                 <Button 
                   onClick={startExam}
                   className="bg-[#D4AF37] hover:bg-[#B8962D] text-[#141414] px-10 py-6 rounded-none font-black text-lg transition-all active:scale-95 shadow-[0_4px_0_#94781E]"

@@ -20,7 +20,11 @@ import {
   Eye,
   EyeOff,
   BarChart3,
-  Activity
+  Activity,
+  FileSpreadsheet,
+  X,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,6 +41,7 @@ import {
   orderBy,
   limit
 } from 'firebase/firestore';
+import { cn } from '@/lib/utils';
 import { auth, db } from './lib/firebase';
 import { Exam, Question } from './types';
 
@@ -85,6 +90,12 @@ export default function App() {
   const [selectedLevels, setSelectedLevels] = useState<string[]>(['심화']);
   const [tempSaveStatus, setTempSaveStatus] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
+  const [bulkUploadStep, setBulkUploadStep] = useState(1);
+  const [bulkExcelFile, setBulkExcelFile] = useState<File | null>(null);
+  const [bulkImageFiles, setBulkImageFiles] = useState<File[]>([]);
+  const [isExamDeleteConfirmOpen, setIsExamDeleteConfirmOpen] = useState(false);
+  const [examToDelete, setExamToDelete] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qImageRef = useRef<HTMLInputElement>(null);
@@ -913,7 +924,7 @@ export default function App() {
                         <div className="col-span-1 p-3 text-center font-mono text-[11px] text-slate-400 border-r border-[#F0F0F0]">{String(allRows.length - index).padStart(2, '0')}</div>
                         <div className="col-span-4 p-3 flex items-center gap-2 border-r border-[#F0F0F0]">
                            <span className="font-bold text-[#141414] truncate">
-                            {examWithLevel.round.includes('회') ? examWithLevel.round : `${examWithLevel.round}회`} 한국사능력검정시험
+                            {examWithLevel.round} 한국사능력검정시험
                            </span>
                            {index < 3 && examWithLevel.isVisible !== false && (
                              <span className="text-[9px] bg-yellow-400 text-black px-1 font-black uppercase rounded-xs">최신</span>
@@ -975,6 +986,18 @@ export default function App() {
                           >
                             <BarChart3 className="w-3 h-3 text-indigo-600" />
                           </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-7 w-7 p-0 rounded-none border-red-100 text-red-400 hover:text-red-600 hover:bg-red-50"
+                            onClick={() => {
+                              setExamToDelete(examWithLevel.id);
+                              setIsExamDeleteConfirmOpen(true);
+                            }}
+                            title="회차 삭제"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -994,7 +1017,7 @@ export default function App() {
                     {(() => {
                       const exam = exams.find(e => e.id === selectedExamId);
                       if (!exam) return "회차 선택됨";
-                      const examName = (exam.round.includes('회') ? exam.round : `${exam.round}회`) + " 한국사능력검정시험";
+                      const examName = exam.round + " 한국사능력검정시험";
                       const isLatest = exams.sort((a,b) => {
                         const rA = parseInt(a.round.replace(/[^0-9]/g, '')) || 0;
                         const rB = parseInt(b.round.replace(/[^0-9]/g, '')) || 0;
@@ -1024,7 +1047,7 @@ export default function App() {
                       {(() => {
                         const exam = exams.find(e => e.id === selectedExamId);
                         if (!exam) return null;
-                        return exam.round.includes('회') ? exam.round : `${exam.round}회`;
+                        return exam.round;
                       })()}
                     </SelectValue>
                   </SelectTrigger>
@@ -1032,7 +1055,7 @@ export default function App() {
                     {visibleExams.length > 0 ? (
                       visibleExams.map((exam) => (
                         <SelectItem key={exam.id} value={exam.id}>
-                          {exam.round.includes('회') ? exam.round : `${exam.round}회`} 한국사능력검정시험
+                          {exam.round} 한국사능력검정시험
                         </SelectItem>
                       ))
                     ) : (
@@ -1055,6 +1078,18 @@ export default function App() {
                 accept=".xlsx, .xls"
                 onChange={handleExcelUpload}
               />
+              <Button 
+                variant="outline" 
+                className="h-9 rounded-none border-[#141414] text-xs font-bold bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                onClick={() => {
+                  setBulkUploadStep(1);
+                  setBulkExcelFile(null);
+                  setBulkImageFiles([]);
+                  setIsBulkUploadOpen(true);
+                }}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 mr-2" /> 문항일괄 업로드
+              </Button>
               <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold" onClick={seedDummyData}>더미 문항 생성</Button>
               <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold gap-2" onClick={() => fileInputRef.current?.click()}>
                 <Upload className="w-3.5 h-3.5" /> 엑셀 업로드
@@ -1591,6 +1626,7 @@ export default function App() {
               selectedExamId={selectedExamId} 
               questions={questions}
               onExamChange={setSelectedExamId}
+              onDeleteExam={handleDeleteExam}
               onSelectQuestion={(q) => {
                 setActiveMenu('management');
                 setActiveTab(q.type === 'advanced' ? 'advanced' : 'general');
@@ -1743,6 +1779,225 @@ export default function App() {
               닫기
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* 문항일괄 업로드 팝업 */}
+      <Dialog open={isBulkUploadOpen} onOpenChange={setIsBulkUploadOpen}>
+        <DialogContent className="max-w-[800px] w-[800px] h-[600px] p-0 overflow-hidden flex flex-col rounded-none border-0">
+          <div className="bg-[#141414] text-white p-4 flex items-center justify-between">
+            <h2 className="text-sm font-black flex items-center gap-2">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+              문항 일괄 업로드 {bulkUploadStep === 1 ? '(1/2: 엑셀)' : '(2/2: 이미지)'}
+            </h2>
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-white/50 hover:text-white" onClick={() => setIsBulkUploadOpen(false)}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          
+          <div className="flex-1 p-6 flex flex-col items-center justify-start bg-slate-50 overflow-y-auto">
+            {bulkUploadStep === 1 ? (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full max-w-lg text-center space-y-6 pt-4"
+              >
+                <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
+                  <FileSpreadsheet className="w-8 h-8 text-emerald-600" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-slate-800">엑셀 데이터 업로드</h3>
+                  <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                    문항 정보가 담긴 엑셀 파일을 선택해주세요.<br />
+                    회차, 번호, 시대, 유형, 난이도 등이 포함되어 있어야 합니다.
+                  </p>
+                </div>
+                
+                <div 
+                  className={cn(
+                    "border-2 border-dashed rounded-lg p-8 cursor-pointer transition-all bg-white relative",
+                    bulkExcelFile ? "border-emerald-500 bg-emerald-50/20" : "border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50/30"
+                  )}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input
+                    type="file"
+                    className="hidden"
+                    ref={fileInputRef}
+                    accept=".xlsx, .xls"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setBulkExcelFile(file);
+                    }}
+                  />
+                  <Upload className={cn("w-6 h-6 mx-auto mb-2", bulkExcelFile ? "text-emerald-500" : "text-emerald-400")} />
+                  <span className="text-[11px] font-bold text-slate-400">
+                    {bulkExcelFile ? "다른 파일로 변경하려면 클릭하세요" : "파일을 클릭하거나 여기에 드래그하세요"}
+                  </span>
+                </div>
+
+                {bulkExcelFile && (
+                  <div className="bg-white border border-emerald-100 p-4 rounded-lg flex items-center justify-between shadow-sm">
+                    <div className="flex items-center gap-3 text-left">
+                      <div className="w-8 h-8 bg-emerald-100 rounded flex items-center justify-center">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-black text-slate-800 truncate max-w-[200px]">{bulkExcelFile.name}</div>
+                        <div className="text-[9px] font-bold text-slate-400">{(bulkExcelFile.size / 1024).toFixed(1)} KB • 체크 완료</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 rounded text-emerald-600">
+                      <Check className="w-3 h-3" />
+                      <span className="text-[9px] font-black">정상</span>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            ) : (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full max-w-lg text-center space-y-6 pt-4"
+              >
+                <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto">
+                  <ImageIcon className="w-8 h-8 text-indigo-600" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-slate-800">이미지 일괄 업로드</h3>
+                  <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                    문항 이미지 파일들을 선택해주세요.<br />
+                    파일명 형식: <span className="text-indigo-600 font-bold">'회차_01(기본)또는 02(심화)_문항번호'</span> 순 (예: 68_01_1.png)
+                  </p>
+                </div>
+                
+                <div 
+                  className={cn(
+                    "border-2 border-dashed rounded-lg p-8 cursor-pointer transition-all bg-white",
+                    bulkImageFiles.length > 0 ? "border-indigo-500 bg-indigo-50/20" : "border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50/30"
+                  )}
+                  onClick={() => qImageRef.current?.click()}
+                >
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    ref={qImageRef}
+                    accept="image/*"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length > 0) setBulkImageFiles(files);
+                    }}
+                  />
+                  <Upload className={cn("w-6 h-6 mx-auto mb-2", bulkImageFiles.length > 0 ? "text-indigo-500" : "text-indigo-400")} />
+                  <span className="text-[11px] font-bold text-slate-400">
+                    {bulkImageFiles.length > 0 ? `${bulkImageFiles.length}개의 파일 선택됨 • 클릭하여 변경` : "이미지 폴더 또는 다중 파일을 선택하세요"}
+                  </span>
+                </div>
+
+                {bulkImageFiles.length > 0 && (
+                  <div className="bg-white border border-indigo-100 rounded-lg shadow-sm">
+                    <div className="p-2 border-b border-indigo-50 flex items-center justify-between px-4">
+                      <span className="text-[10px] font-bold text-indigo-600">선택된 파일 목록 ({bulkImageFiles.length})</span>
+                    </div>
+                    <div className="max-h-[120px] overflow-y-auto p-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        {bulkImageFiles.slice(0, 6).map((file, i) => (
+                          <div key={i} className="flex items-center gap-2 p-1.5 bg-slate-50 rounded text-[9px] font-bold text-slate-600 border border-slate-100">
+                            <ImageIcon className="w-2.5 h-2.5 text-indigo-400" />
+                            <span className="truncate">{file.name}</span>
+                          </div>
+                        ))}
+                        {bulkImageFiles.length > 6 && (
+                          <div className="col-span-2 text-center py-1 text-[9px] text-slate-400 font-bold">외 {bulkImageFiles.length - 6}개 파일 더 있음...</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </div>
+
+          <div className="p-4 bg-white border-t border-slate-100 flex items-center justify-between">
+            <Button 
+              variant="outline" 
+              className="px-6 h-10 rounded-none border-slate-200 text-xs font-black text-slate-500"
+              onClick={() => setIsBulkUploadOpen(false)}
+            >
+              취소
+            </Button>
+            
+            <div className="flex items-center gap-2">
+              {bulkUploadStep === 2 && (
+                <Button 
+                  variant="outline" 
+                  className="px-6 h-10 rounded-none border-indigo-200 text-indigo-600 text-xs font-black flex items-center gap-2"
+                  onClick={() => setBulkUploadStep(1)}
+                >
+                  <ChevronLeft className="w-4 h-4" /> 이전
+                </Button>
+              )}
+              
+              {bulkUploadStep === 1 ? (
+                <Button 
+                  className="px-8 h-10 rounded-none bg-[#141414] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-2"
+                  onClick={() => setBulkUploadStep(2)}
+                >
+                  다음 <ChevronRight className="w-4 h-4" />
+                </Button>
+              ) : (
+                <Button 
+                  className="px-8 h-10 rounded-none bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-2"
+                  onClick={() => {
+                    alert('업로드가 완료되었습니다.');
+                    setIsBulkUploadOpen(false);
+                  }}
+                >
+                  업로드 완료 <Check className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 회차 삭제 확인 다이얼로그 (전체 관리용) */}
+      <Dialog open={isExamDeleteConfirmOpen} onOpenChange={setIsExamDeleteConfirmOpen}>
+        <DialogContent className="max-w-[400px] p-0 overflow-hidden rounded-none border-0 shadow-2xl">
+          <div className="bg-red-600 p-4 flex items-center gap-3 text-white">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            <h2 className="text-sm font-black uppercase tracking-tight">회차 삭제 경고</h2>
+          </div>
+          <div className="p-6 bg-white space-y-4">
+            <div className="space-y-2">
+              <p className="text-[13px] font-bold text-slate-900 leading-relaxed">
+                정말로 <span className="text-red-600 font-black">[{exams.find(e => e.id === examToDelete)?.round}]</span> 회차를 삭제하시겠습니까?
+              </p>
+              <p className="text-[11px] text-slate-500 font-medium leading-relaxed bg-slate-50 p-3 border-l-2 border-slate-200">
+                삭제 시 해당 회차의 모든 문항 데이터가 영구적으로 삭제되며 복구할 수 없습니다.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-0 border-t border-slate-100">
+            <Button 
+              className="flex-1 h-12 rounded-none bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-black"
+              onClick={() => setIsExamDeleteConfirmOpen(false)}
+            >
+              취소
+            </Button>
+            <Button 
+              className="flex-1 h-12 rounded-none bg-red-600 hover:bg-red-700 text-white text-xs font-black"
+              onClick={async () => {
+                if (examToDelete) {
+                  await handleDeleteExam(examToDelete);
+                  setIsExamDeleteConfirmOpen(false);
+                  setExamToDelete(null);
+                }
+              }}
+            >
+              삭제 승인
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

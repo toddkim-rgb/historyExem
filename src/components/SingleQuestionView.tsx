@@ -92,7 +92,7 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
             <SelectContent className="rounded-none">
               {exams.map((exam) => (
                 <SelectItem key={exam.id} value={exam.id} className="text-[11px]">
-                  {exam.round.includes('회') ? exam.round : `${exam.round}회`}
+                  {exam.round}
                 </SelectItem>
               ))}
             </SelectContent>
