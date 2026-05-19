@@ -838,13 +838,13 @@ export default function App() {
               className={`px-6 py-3 text-[13px] cursor-pointer transition-all ${activeMenu === 'user' ? 'opacity-100 bg-white/5 border-l-3 border-[#D4AF37]' : 'opacity-60 hover:opacity-100'}`}
               onClick={() => setActiveMenu('user')}
             >
-              사용자화면(회차별 모의)
+              모의시험 풀기(사용자)
             </li>
             <li 
               className={`px-6 py-3 text-[13px] cursor-pointer transition-all ${activeMenu === 'user_single' ? 'opacity-100 bg-white/5 border-l-3 border-[#D4AF37]' : 'opacity-60 hover:opacity-100'}`}
               onClick={() => setActiveMenu('user_single')}
             >
-              사용자화면(단항문제 풀기)
+              한 문항 풀기(사용자)
             </li>
           </ul>
         </nav>
@@ -864,7 +864,7 @@ export default function App() {
               <div className="h-10 w-1 bg-[#D4AF37]" />
               <div>
                 <h1 className="text-lg font-black tracking-tighter flex items-center gap-2">
-                  {activeMenu === 'management' ? '기출 문항 관리' : activeMenu === 'rounds' ? '기출문제 회차 관리' : activeMenu === 'stats' ? '성적 및 통계 분석' : activeMenu === 'user' ? '사용자 문제풀이 화면' : '단항 문제풀이 화면'}
+                  {activeMenu === 'management' ? '기출 문항 관리' : activeMenu === 'rounds' ? '기출문제 회차 관리' : activeMenu === 'stats' ? '성적 및 통계 분석' : activeMenu === 'user' ? '모의시험 풀기(사용자)' : '한 문항 풀기(사용자)'}
                   <span className="text-[10px] font-bold text-[#D4AF37] border border-[#D4AF37] px-1.5 py-0.5 ml-2 uppercase tracking-tighter">
                     {activeMenu === 'management' ? 'Admin' : activeMenu === 'rounds' ? 'Rounds' : activeMenu === 'stats' ? 'Report' : 'User'}
                   </span>
