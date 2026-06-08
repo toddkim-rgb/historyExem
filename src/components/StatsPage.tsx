@@ -692,27 +692,6 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                   </Popover>
                 </div>
 
-                {/* 7. 배점 (Multi Select) */}
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">배점</label>
-                  <Popover>
-                    <PopoverTrigger className={cn(buttonVariants({ variant: "outline" }), "w-full h-7 rounded-none border-slate-200 text-[11px] justify-between px-3 bg-slate-50/30")}>
-                      <span className="truncate">{searchScore.length === 0 ? "전체" : `${searchScore.join(', ')}점`}</span>
-                      <ChevronDown className="w-3 h-3 opacity-50" />
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[140px] p-0 rounded-none shadow-xl border-slate-200" align="start">
-                      <div className="p-2 space-y-0.5 bg-white">
-                        {scores.map(s => (
-                          <div key={s} className="flex items-center space-x-2 p-1 hover:bg-slate-100 cursor-pointer" onClick={() => searchScore.includes(s) ? setSearchScore(searchScore.filter(val => val !== s)) : setSearchScore([...searchScore, s])}>
-                            <Checkbox checked={searchScore.includes(s)} className="w-3.5 h-3.5 rounded-none" />
-                            <label className="text-[11px]">{s}점</label>
-                          </div>
-                        ))}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
                 {/* 8. 단어 검색 */}
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">단어 검색</label>

@@ -1063,10 +1063,7 @@ export default function App() {
                     )}
                   </SelectContent>
                 </Select>
-                <Button variant="outline" size="sm" onClick={() => setIsCreateModalOpen(true)} className="h-9 px-3 rounded-none border-[#141414] text-[11px] font-bold gap-1.5 flex items-center bg-white hover:bg-slate-50">
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>기출회차 추가</span>
-                </Button>
+
               </div>
             </div>
 
