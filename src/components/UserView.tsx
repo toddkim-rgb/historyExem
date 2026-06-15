@@ -29,21 +29,37 @@ export const UserView: React.FC<UserViewProps> = ({
   const [isExamStarted, setIsExamStarted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [timeElapsed, setTimeElapsed] = useState(0);
+  const [timeLimit, setTimeLimit] = useState<number>(80); // Default 80 minutes
+  const [timeLeft, setTimeLeft] = useState<number>(80 * 60);
   const [totalTime, setTotalTime] = useState<number | null>(null);
 
   const currentQuestion = questions[currentQuestionIndex];
   
+  // Sync timeLeft when timeLimit changes before the exam starts
+  useEffect(() => {
+    if (!isExamStarted) {
+      setTimeLeft(timeLimit * 60);
+    }
+  }, [timeLimit, isExamStarted]);
+
   // Timer logic
   useEffect(() => {
     let interval: any;
     if (isExamStarted && !isPaused && !showResult) {
       interval = setInterval(() => {
-        setTimeElapsed(prev => prev + 1);
+        setTimeLeft(prev => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            // Auto submit when time runs out
+            finishExam();
+            return 0;
+          }
+          return prev - 1;
+        });
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isExamStarted, isPaused, showResult]);
+  }, [isExamStarted, isPaused, showResult, timeLimit]);
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -84,13 +100,16 @@ export const UserView: React.FC<UserViewProps> = ({
     setShowResult(true);
     setIsExamStarted(false);
     setShowConfirmModal(false);
-    setTotalTime(timeElapsed);
+    setTimeLeft(prev => {
+      setTotalTime(timeLimit * 60 - prev);
+      return prev;
+    });
   };
 
   const startExam = () => {
     setIsExamStarted(true);
     setIsPaused(false);
-    setTimeElapsed(0);
+    setTimeLeft(timeLimit * 60);
     setUserAnswers({});
     setShowResult(false);
     setCurrentQuestionIndex(0);
@@ -114,7 +133,7 @@ export const UserView: React.FC<UserViewProps> = ({
     setCurrentQuestionIndex(0);
     setIsExamStarted(false);
     setIsPaused(false);
-    setTimeElapsed(0);
+    setTimeLeft(timeLimit * 60);
     setTotalTime(null);
   };
 
@@ -157,12 +176,49 @@ export const UserView: React.FC<UserViewProps> = ({
 
         {/* Timer UI */}
         <div className="flex items-center gap-4">
+          {!isExamStarted && totalTime === null && (
+            <div className="flex items-center gap-2 bg-white px-3 py-1 border border-[#D1D1CF] shadow-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">제한시간:</span>
+              <Select value={String(timeLimit)} onValueChange={(val) => setTimeLimit(parseInt(val))}>
+                <SelectTrigger className="w-[85px] h-6 rounded-none border-0 bg-slate-50 text-slate-900 font-bold text-[11px] hover:bg-slate-100 px-2">
+                  <SelectValue placeholder="시간 설정" />
+                </SelectTrigger>
+                <SelectContent className="rounded-none">
+                  <SelectItem value="100" className="text-[11px]">100분</SelectItem>
+                  <SelectItem value="90" className="text-[11px]">90분</SelectItem>
+                  <SelectItem value="80" className="text-[11px]">80분</SelectItem>
+                  <SelectItem value="70" className="text-[11px]">70분</SelectItem>
+                  <SelectItem value="60" className="text-[11px]">60분</SelectItem>
+                  <SelectItem value="50" className="text-[11px]">50분</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           {(isExamStarted || totalTime !== null) && (
-            <div className={`flex items-center gap-3 px-4 py-1.5 border ${isPaused ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#D1D1CF]'} shadow-sm transition-colors`}>
+            <div className={`flex items-center gap-3 px-4 py-1.5 border ${
+              isPaused 
+                ? 'bg-amber-50 border-amber-200' 
+                : timeLeft < 300 
+                  ? 'bg-rose-50 border-rose-200' 
+                  : 'bg-white border-[#D1D1CF]'
+            } shadow-sm transition-colors`}>
               <div className="flex items-center gap-2">
-                <Clock className={`w-4 h-4 ${isPaused ? 'text-amber-500' : 'text-slate-400'}`} />
-                <span className={`text-[12px] font-mono font-black ${isPaused ? 'text-amber-600' : 'text-slate-900'}`}>
-                  {formatTime(timeElapsed)}
+                <Clock className={`w-4 h-4 ${
+                  isPaused 
+                    ? 'text-amber-500' 
+                    : timeLeft < 300 
+                      ? 'text-rose-500 animate-pulse' 
+                      : 'text-slate-400'
+                }`} />
+                <span className={`text-[12px] font-mono font-black ${
+                  isPaused 
+                    ? 'text-amber-600' 
+                    : timeLeft < 300 
+                      ? 'text-rose-600 font-extrabold animate-pulse' 
+                      : 'text-slate-900'
+                }`}>
+                  {formatTime(timeLeft)}
                 </span>
               </div>
               
@@ -210,7 +266,7 @@ export const UserView: React.FC<UserViewProps> = ({
                   </p>
                   <p className="text-rose-400 text-[10px] font-black animate-pulse flex items-center justify-center gap-1.5">
                     <Clock className="w-3 h-3" />
-                    응시와 동시에 시간이 측정됩니다.
+                    응시와 동시에 제한시간의 카운트다운이 시작됩니다.
                   </p>
                 </div>
                 <Button 
@@ -235,7 +291,7 @@ export const UserView: React.FC<UserViewProps> = ({
                 </div>
                 <h3 className="text-2xl font-black mb-2 uppercase tracking-tighter">시험 일시 중지</h3>
                 <p className="text-white/60 text-xs mb-8 font-bold uppercase tracking-widest">
-                  현재 시간: {formatTime(timeElapsed)}
+                  남은 시간: {formatTime(timeLeft)}
                 </p>
                 <Button 
                   onClick={() => setIsPaused(false)}

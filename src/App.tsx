@@ -1277,40 +1277,6 @@ export default function App() {
                       </Button>
                     </div>
                   )}
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <Label className="text-[11px] font-bold">시대</Label>
-                      <Select 
-                        value={selectedQuestion?.era || ""} 
-                        onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, era: v} : null)}
-                      >
-                        <SelectTrigger className="w-[90px] h-7 rounded-none border-[#D1D1CF] bg-white text-[11px]">
-                          <SelectValue placeholder="선택">
-                            {selectedQuestion?.era || ""}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="rounded-none">
-                          {ERAS.map(era => <SelectItem key={era} value={era}>{era}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Label className="text-[11px] font-bold">난이도</Label>
-                      <Select 
-                        value={selectedQuestion?.difficulty || ""} 
-                        onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, difficulty: v as any} : null)}
-                      >
-                        <SelectTrigger className="w-[70px] h-7 rounded-none border-[#D1D1CF] bg-white text-[11px]">
-                          <SelectValue placeholder="선택">
-                            {selectedQuestion?.difficulty || ""}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="rounded-none">
-                          {DIFFICULTIES.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
                 </div>
               </CardHeader>
 
@@ -1396,7 +1362,23 @@ export default function App() {
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-3 gap-4">
+                              <div className="space-y-1">
+                                <Label className="text-[11px] font-bold">시대 (선사/고대/조선...)</Label>
+                                <Select 
+                                  value={selectedQuestion?.era || ""} 
+                                  onValueChange={(v) => setSelectedQuestion(prev => prev ? {...prev, era: v} : null)}
+                                >
+                                  <SelectTrigger className="rounded-none border-[#D1D1CF] h-8 bg-white text-sm">
+                                    <SelectValue placeholder="시대 선택">
+                                      {selectedQuestion?.era || ""}
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-none">
+                                    {ERAS.map(era => <SelectItem key={era} value={era}>{era}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
                               <div className="space-y-1">
                                 <Label className="text-[11px] font-bold">분야 (정치/경제/사회/문화...)</Label>
                                 <Select 
@@ -1515,12 +1497,15 @@ export default function App() {
                                 />
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-[11px] font-bold">실제 정답률 (%)</Label>
+                                <Label className="text-[11px] font-bold flex items-center justify-between">
+                                  <span>실제 정답률 (%)</span>
+                                  <span className="text-[9px] text-[#2563EB] bg-blue-50 px-1.5 py-0.5 font-bold border border-blue-200">API 수신 (Read Only)</span>
+                                </Label>
                                 <Input 
                                   type="number" 
-                                  className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                  className="rounded-none border-[#D1D1CF] h-8 text-sm bg-slate-50 text-slate-500 cursor-not-allowed" 
                                   value={selectedQuestion.correctRate || 0}
-                                  onChange={(e) => setSelectedQuestion({...selectedQuestion, correctRate: parseInt(e.target.value)})}
+                                  readOnly
                                 />
                               </div>
                             </div>

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Exam, Question } from '../types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Check, ChevronLeft, ChevronRight, Target, Search, AlertCircle, HelpCircle } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Target, Search, AlertCircle, HelpCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -249,7 +249,7 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
           )}
         </Card>
 
-        {/* Right Pane: Result & Explanation */}
+        {/* Right Pane: Result Judgement */}
         <AnimatePresence>
           {showResult && currentQuestion && (
             <motion.div
@@ -258,45 +258,82 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
               exit={{ opacity: 0, x: 50 }}
               className="flex-1 max-w-[35%] flex flex-col gap-4"
             >
-              <Card className="flex-1 flex flex-col rounded-none border-[#7c4dff] shadow-[8px_8px_0_rgba(124,77,255,0.05)] bg-white overflow-hidden border-t-8">
-                <div className="p-6 bg-white border-b border-indigo-100 text-center">
-                  <div className="inline-block px-4 py-2 bg-indigo-50 border border-indigo-100 rounded-none shadow-sm">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest mr-2">정답 번호</span>
-                    <span className="text-2xl font-black text-indigo-600 underline underline-offset-8">{currentQuestion.answer}</span>
+              <Card className={`flex-1 flex flex-col rounded-none shadow-[8px_8px_0_rgba(0,0,0,0.05)] bg-white overflow-hidden border-t-8 ${
+                userAnswer === currentQuestion.answer 
+                  ? 'border-emerald-500 shadow-[8px_8px_0_rgba(16,185,129,0.05)]' 
+                  : 'border-rose-500 shadow-[8px_8px_0_rgba(244,63,94,0.05)]'
+              }`}>
+                {/* Result Message Section */}
+                <div className={`p-8 text-center shrink-0 flex flex-col items-center justify-center gap-4 border-b ${
+                  userAnswer === currentQuestion.answer 
+                    ? 'bg-emerald-50/50 border-emerald-100' 
+                    : 'bg-rose-50/50 border-rose-100'
+                }`}>
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center border-4 ${
+                    userAnswer === currentQuestion.answer 
+                      ? 'bg-emerald-500 border-emerald-200 text-white animate-bounce' 
+                      : 'bg-rose-500 border-rose-200 text-white'
+                  }`}>
+                    {userAnswer === currentQuestion.answer ? (
+                      <Check className="w-8 h-8 stroke-[3]" />
+                    ) : (
+                      <X className="w-8 h-8 stroke-[3]" />
+                    )}
                   </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Target className="w-4 h-4 text-indigo-600" />
-                      <h4 className="font-black text-sm text-indigo-900 uppercase">문제 해설</h4>
-                    </div>
-                    <p className="text-[14px] text-slate-700 leading-relaxed font-bold">
-                      {currentQuestion.explanation || '등록된 해설이 없습니다.'}
+                  
+                  <div>
+                    <h3 className={`text-xl font-black ${
+                      userAnswer === currentQuestion.answer ? 'text-emerald-800' : 'text-rose-800'
+                    }`}>
+                      {userAnswer === currentQuestion.answer ? '정답입니다! 🎉' : '오답입니다... 😢'}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1 font-bold">
+                      {userAnswer === currentQuestion.answer 
+                        ? '훌륭합니다! 다음 문제를 풀고 기세를 이어가세요.' 
+                        : '아쉽네요! 실제 정답과 아래 정답을 비교해보세요.'}
                     </p>
                   </div>
-
-                  {currentQuestion.keywords && currentQuestion.keywords.length > 0 && (
-                    <div className="pt-6 border-t border-slate-100">
-                      <div className="flex flex-wrap gap-2">
-                        {currentQuestion.keywords.map((kw, i) => (
-                          <span key={i} className="text-[10px] bg-slate-50 px-3 py-1.5 border border-slate-200 text-slate-500 font-bold">
-                            #{kw}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
 
-                <div className="p-4 bg-slate-50 border-t border-slate-100">
+                {/* Answer Comparison Grid */}
+                <div className="flex-1 p-6 flex flex-col justify-center items-center gap-6">
+                  <div className="w-full grid grid-cols-2 gap-4">
+                    <div className={`p-5 border text-center transition-all ${
+                      userAnswer === currentQuestion.answer 
+                        ? 'bg-emerald-50/30 border-emerald-100' 
+                        : 'bg-rose-50/30 border-rose-100'
+                    }`}>
+                      <span className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                        내가 선택한 답
+                      </span>
+                      <div className={`inline-flex w-14 h-14 rounded-full items-center justify-center text-2xl font-black ${
+                        userAnswer === currentQuestion.answer 
+                          ? 'bg-emerald-500 text-white' 
+                          : 'bg-rose-500 text-white'
+                      }`}>
+                        {userAnswer}
+                      </div>
+                    </div>
+
+                    <div className="p-5 border border-emerald-100 bg-emerald-50/10 text-center transition-all">
+                      <span className="block text-[10px] font-black uppercase tracking-widest text-emerald-600/70 mb-2">
+                        실제 정답
+                      </span>
+                      <div className="inline-flex w-14 h-14 rounded-full items-center justify-center text-2xl font-black bg-emerald-500 text-white">
+                        {currentQuestion.answer}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Close Button */}
+                <div className="p-4 bg-slate-50 border-t border-slate-100 italic">
                   <Button 
                     variant="outline"
-                    className="w-full h-12 rounded-none border-slate-200 text-slate-400 hover:text-slate-900 font-bold"
+                    className="w-full h-12 rounded-none border-slate-200 text-slate-500 hover:text-slate-900 font-bold bg-white"
                     onClick={() => setShowResult(false)}
                   >
-                    해설 닫기
+                    결과 확인창 닫기
                   </Button>
                 </div>
               </Card>
