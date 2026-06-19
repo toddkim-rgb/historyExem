@@ -27,6 +27,8 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   collection, 
@@ -39,7 +41,8 @@ import {
   deleteDoc,
   serverTimestamp,
   orderBy,
-  limit
+  limit,
+  getDocs
 } from 'firebase/firestore';
 import { cn } from '@/lib/utils';
 import { auth, db } from './lib/firebase';
@@ -97,6 +100,9 @@ export default function App() {
   const [isExamDeleteConfirmOpen, setIsExamDeleteConfirmOpen] = useState(false);
   const [examToDelete, setExamToDelete] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [pdfProgressText, setPdfProgressText] = useState('');
+  const [pdfProgressPercent, setPdfProgressPercent] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qImageRef = useRef<HTMLInputElement>(null);
 
@@ -699,6 +705,370 @@ export default function App() {
     XLSX.writeFile(workbook, "history_exam_template_50.xlsx");
   };
 
+  const mapQuestionToExcelRow = (q: Question) => {
+    const formattedOptions = q.options && q.options.length > 0
+      ? q.options.map((opt, idx) => {
+          const circles = ['①', '②', '③', '④', '⑤'];
+          return `${circles[idx] || (idx + 1) + '. '} ${opt}`;
+        }).join(' ')
+      : '';
+
+    return {
+      "문항ID": q.number,
+      "급수": q.type === 'advanced' ? '심화' : '기본',
+      "출제위원": q.author || '',
+      "시대": q.era || '',
+      "분야": q.field || '',
+      "문항유형": q.category || '',
+      "배점": q.score || 2,
+      "난이도": q.difficulty || '중',
+      "정답": q.answer || 1,
+      "예상정답률": q.expectedCorrectRate || 0,
+      "평정간극": q.ratingGap || '',
+      "주제어": q.keywords && q.keywords.length > 0 ? q.keywords.join(', ') : '',
+      "출제근거": q.source || '',
+      "문항제목": q.title || '',
+      "문항이미지(파일선택)": q.imageUrl || '',
+      "해설": q.explanation || '',
+      "문항내용텍스트": formattedOptions,
+      "전맹자용문항": q.accessibleQuestion || '',
+      "비고": q.etc || ''
+    };
+  };
+
+  // Generate HTML block for a single question
+  const createQuestionHtml = (q: Question, examRound: string) => {
+    const typeLabel = q.type === 'advanced' ? '심화 (Advanced)' : '기본 (Basic)';
+
+    const formattedOptions = q.options && q.options.length > 0
+      ? q.options.map((opt, idx) => {
+          const circles = ['①', '②', '③', '④', '⑤'];
+          // Remove leading numbers or circles if already present to prevent duplication
+          const textOnly = opt.replace(/^[①②③④⑤12345.]\s*/, '').trim();
+          return `<div style="display: flex; margin-bottom: 6px; font-size: 13px; line-height: 1.5; color: #334155;">
+            <span style="font-weight: bold; margin-right: 8px; color: #1e293b; flex-shrink: 0;">${circles[idx] || (idx + 1) + '.'}</span>
+            <span>${textOnly}</span>
+          </div>`;
+        }).join('')
+      : '';
+
+    const keywordsList = q.keywords && q.keywords.length > 0 
+      ? q.keywords.map(k => `<span style="background-color: #f1f5f9; color: #475569; padding: 2px 6px; font-size: 11px; font-weight: bold; margin-right: 4px;">#${k}</span>`).join('')
+      : '<span style="color: #94a3b8;">-</span>';
+
+    return `
+      <div style="width: 790px; padding: 45px; background-color: #ffffff; font-family: sans-serif; box-sizing: border-box; color: #1e293b; position: relative;">
+        <!-- Header -->
+        <div style="border-bottom: 3px solid #1e293b; padding-bottom: 12px; margin-bottom: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 20px; font-weight: 900; color: #0f172a; letter-spacing: -0.05em;">한국사능력검정시험 문항 결과 보고서</span>
+            <span style="font-size: 11px; font-family: monospace; background-color: #0f172a; color: #ffffff; padding: 4px 10px; font-weight: bold; letter-spacing: 0.1em; text-transform: uppercase;">OFFICIAL DOCUMENT</span>
+          </div>
+          <div style="font-size: 10px; color: #64748b; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;">
+            National History Proficiency Test — Item Specification Sheet
+          </div>
+        </div>
+
+        <!-- Metadata Primary Grid -->
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 12px; font-weight: bold;">
+          <tr>
+            <td style="width: 25%; border: 1px solid #cbd5e1; background-color: #f8fafc; padding: 10px;">
+              <div style="font-size: 10px; color: #94a3b8; margin-bottom: 2px; font-weight: bold;">회차 (Exam Round)</div>
+              <div style="font-size: 14px; font-weight: 800; color: #0f172a;">${examRound}</div>
+            </td>
+            <td style="width: 25%; border: 1px solid #cbd5e1; background-color: #f8fafc; padding: 10px;">
+              <div style="font-size: 10px; color: #94a3b8; margin-bottom: 2px; font-weight: bold;">시험급수 (Exam Level)</div>
+              <div style="font-size: 14px; font-weight: 800; color: #3b82f6;">${typeLabel}</div>
+            </td>
+            <td style="width: 25%; border: 1px solid #cbd5e1; background-color: #f8fafc; padding: 10px;">
+              <div style="font-size: 10px; color: #94a3b8; margin-bottom: 2px; font-weight: bold;">문항번호 / 배점</div>
+              <div style="font-size: 14px; font-weight: 800; color: #0f172a;">문항 ${String(q.number).padStart(2, '0')} (${q.score || 2}점)</div>
+            </td>
+            <td style="width: 25%; border: 1px solid #cbd5e1; background-color: #f8fafc; padding: 10px;">
+              <div style="font-size: 10px; color: #94a3b8; margin-bottom: 2px; font-weight: bold;">난이도 / 정답</div>
+              <div style="font-size: 14px; font-weight: 900; color: #ef4444;">${q.difficulty || '중'} / 정답 ${q.answer || 1}번</div>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Metadata Support Grid -->
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; border: 1px solid #e2e8f0; padding: 16px; background-color: #fafafa; font-size: 12.5px; border-radius: 4px; box-sizing: border-box;">
+          <div>
+            <span style="font-weight: 800; color: #64748b; margin-right: 8px;">• 시대구분:</span>
+            <span style="font-weight: bold; color: #1e293b;">${q.era || '-'}</span>
+          </div>
+          <div>
+            <span style="font-weight: 800; color: #64748b; margin-right: 8px;">• 출제분야 / 유형:</span>
+            <span style="font-weight: bold; color: #1e293b;">${q.field || '-'} / ${q.category || '-'}</span>
+          </div>
+          <div>
+            <span style="font-weight: 800; color: #64748b; margin-right: 8px;">• 출제근거:</span>
+            <span style="font-weight: bold; color: #1e293b;">${q.source || '-'}</span>
+          </div>
+          <div>
+            <span style="font-weight: 800; color: #64748b; margin-right: 8px;">• 출제위원:</span>
+            <span style="font-weight: bold; color: #1e293b;">${q.author || '-'}</span>
+          </div>
+          <div>
+            <span style="font-weight: 800; color: #64748b; margin-right: 8px;">• 예상 정답률:</span>
+            <span style="font-weight: bold; color: #1e293b;">${q.expectedCorrectRate || 0}%</span>
+          </div>
+          <div>
+            <span style="font-weight: 800; color: #64748b; margin-right: 8px;">• 실제 정답률:</span>
+            <span style="font-weight: bold; color: #1e293b;">${q.correctRate || 0}%</span>
+          </div>
+          <div style="grid-column: span 2;">
+            <span style="font-weight: 800; color: #64748b; margin-right: 8px;">• 키워드(주제어):</span>
+            <span style="display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle;">${keywordsList}</span>
+          </div>
+        </div>
+
+        <!-- Question Title and Box -->
+        <div style="border: 2px solid #0f172a; padding: 20px; border-radius: 4px; margin-bottom: 24px; background-color: #ffffff;">
+          <div style="font-size: 15px; font-weight: 800; line-height: 1.6; color: #0f172a; margin-bottom: 16px;">
+            <span style="font-size: 16px; font-weight: 950; margin-right: 4px; color: #4338ca;">[질문]</span> ${q.title || '문항 제목이 없습니다.'}
+          </div>
+
+          <!-- Image container if present -->
+          ${q.imageUrl ? `
+          <div style="display: flex; justify-content: center; align-items: center; border: 1px solid #e2e8f0; background-color: #f8fafc; padding: 12px; margin: 16px 0; border-radius: 4px;">
+            <img src="${q.imageUrl}" style="max-height: 250px; max-width: 100%; object-fit: contain;" crossorigin="anonymous" />
+          </div>
+          ` : ''}
+
+          <!-- Options -->
+          <div style="margin-top: 16px; border-top: 1px dashed #cbd5e1; padding-top: 16px;">
+            ${formattedOptions}
+          </div>
+        </div>
+
+        <!-- Explanations and Accessibility -->
+        <div style="border-left: 4px solid #6366f1; padding-left: 16px; margin-bottom: 20px;">
+          <div style="font-size: 12px; font-weight: 900; color: #4338ca; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.05em;">💡 해설 및 분석 (Explanation)</div>
+          <div style="font-size: 12px; line-height: 1.7; color: #334155; font-weight: 500; white-space: pre-line;">${q.explanation || '등록된 해설이 없습니다.'}</div>
+        </div>
+
+        ${q.accessibleQuestion ? `
+        <div style="border-left: 4px solid #0ea5e9; padding-left: 16px; margin-bottom: 20px;">
+          <div style="font-size: 12px; font-weight: 900; color: #0369a1; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.05em;">♿ 시각장애인용 대체 문항 (Accessibility Text)</div>
+          <div style="font-size: 12px; line-height: 1.7; color: #334155; font-weight: 500; white-space: pre-line;">${q.accessibleQuestion}</div>
+        </div>
+        ` : ''}
+
+        ${q.etc ? `
+        <div style="font-size: 11px; font-weight: bold; color: #64748b; background-color: #f1f5f9; padding: 8px 12px; border-radius: 4px; margin-top: 20px; border-left: 3px solid #cbd5e1;">
+          <span style="color: #475569; font-weight: 800; margin-right: 4px;">[비고]</span> ${q.etc}
+        </div>
+        ` : ''}
+
+        <!-- Footer / Page Number -->
+        <div style="margin-top: 40px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 10px; color: #94a3b8; font-weight: bold;">
+          <span>KOREAN HISTORY EXAM SYSTEM</span>
+          <span>REPORT CODE: CR-${q.number}-${q.type === 'advanced' ? 'A' : 'B'}</span>
+        </div>
+      </div>
+    `;
+  };
+
+  const downloadAllQuestionsPDF = async () => {
+    if (!selectedExamId) {
+      alert("다운로드할 회차를 선택해주세요.");
+      return;
+    }
+    const exam = exams.find(e => e.id === selectedExamId);
+    if (!exam) return;
+
+    setIsGeneratingPDF(true);
+    setPdfProgressText(`회차 전체 문항 로딩 중...`);
+    setPdfProgressPercent(5);
+
+    try {
+      const qSnapshot = await getDocs(
+        query(collection(db, 'questions'), where('examId', '==', selectedExamId))
+      );
+      const allQuestions = qSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question));
+      
+      // Sort level ('general' first, 'advanced' second) and then by number
+      allQuestions.sort((a, b) => {
+        if (a.type !== b.type) {
+          return a.type === 'general' ? -1 : 1;
+        }
+        return a.number - b.number;
+      });
+
+      if (allQuestions.length === 0) {
+        alert("이 회차에 등록된 문항이 없습니다.");
+        setIsGeneratingPDF(false);
+        return;
+      }
+
+      setPdfProgressText(`전체 PDF 생성 준비 중...`);
+      setPdfProgressPercent(10);
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const roundName = `${exam.round} 한국사능력검정시험`;
+
+      for (let index = 0; index < allQuestions.length; index++) {
+        const q = allQuestions[index];
+        const progress = Math.round(10 + (index / allQuestions.length) * 85);
+        setPdfProgressText(`[전체 ${allQuestions.length}문항] ${q.number}번 문항 처리 중... (${index + 1}/${allQuestions.length})`);
+        setPdfProgressPercent(progress);
+
+        // Render this question to a sandbox div
+        const tempDiv = document.createElement('div');
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-9999px';
+        tempDiv.style.top = '-9999px';
+        tempDiv.style.width = '790px';
+        tempDiv.style.background = '#ffffff';
+        tempDiv.innerHTML = createQuestionHtml(q, roundName);
+        document.body.appendChild(tempDiv);
+
+        // Wait for images
+        await new Promise<void>((resolve) => {
+          const imgs = tempDiv.getElementsByTagName('img');
+          if (imgs.length === 0) return resolve();
+          let loaded = 0;
+          const total = imgs.length;
+          const check = () => {
+            loaded++;
+            if (loaded >= total) resolve();
+          };
+          for (let i = 0; i < imgs.length; i++) {
+            if (imgs[i].complete) {
+              check();
+            } else {
+              imgs[i].onload = check;
+              imgs[i].onerror = check; // Continue anyway even if image fails
+            }
+          }
+        });
+
+        const canvas = await html2canvas(tempDiv, {
+          scale: 1.5, // Perfect ratio for clear details and lightweight size
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff'
+        });
+
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = 210;
+        const pageHeight = 295;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        if (index > 0) {
+          pdf.addPage();
+        }
+
+        // Draw onto the current page
+        pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, 'FAST');
+        
+        // If question content is taller than 1 A4 page, slide onto additional heights
+        if (imgHeight > pageHeight) {
+          let heightLeft = imgHeight - pageHeight;
+          let position = -pageHeight;
+          while (heightLeft > 0) {
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+            heightLeft -= pageHeight;
+            position -= pageHeight;
+          }
+        }
+
+        tempDiv.remove();
+      }
+
+      setPdfProgressPercent(98);
+      setPdfProgressText(`PDF 파일 다운로드 시작...`);
+      pdf.save(`${exam.round}_한능검_전체문항.pdf`);
+    } catch (error) {
+      console.error("Error downloading all questions PDF:", error);
+      alert("다운로드 중 오류가 발생했습니다.");
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
+  const downloadSingleQuestionPDF = async (q: Question) => {
+    const exam = exams.find(e => e.id === selectedExamId);
+    const roundName = exam ? `${exam.round} 한국사능력검정시험` : "한국사능력검정시험";
+    const filename = exam ? `${exam.round}_한능검_문항_${String(q.number).padStart(2, '0')}.pdf` : `한능검_문항_${String(q.number).padStart(2, '0')}.pdf`;
+
+    setIsGeneratingPDF(true);
+    setPdfProgressText(`문항 ${q.number}번 PDF 다운로드 생성 중...`);
+    setPdfProgressPercent(20);
+
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.left = '-9999px';
+    tempDiv.style.top = '-9999px';
+    tempDiv.style.width = '790px';
+    tempDiv.style.background = '#ffffff';
+    tempDiv.innerHTML = createQuestionHtml(q, roundName);
+    document.body.appendChild(tempDiv);
+
+    try {
+      // Wait for images
+      await new Promise<void>((resolve) => {
+        const imgs = tempDiv.getElementsByTagName('img');
+        if (imgs.length === 0) return resolve();
+        let loaded = 0;
+        const total = imgs.length;
+        const check = () => {
+          loaded++;
+          if (loaded >= total) resolve();
+        };
+        for (let i = 0; i < imgs.length; i++) {
+          if (imgs[i].complete) {
+            check();
+          } else {
+            imgs[i].onload = check;
+            imgs[i].onerror = check;
+          }
+        }
+      });
+      
+      setPdfProgressPercent(55);
+
+      const canvas = await html2canvas(tempDiv, {
+        scale: 2, // High resolution for single sheets
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff'
+      });
+
+      setPdfProgressPercent(85);
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const pageHeight = 295;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= pageHeight;
+
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pageHeight;
+      }
+
+      setPdfProgressPercent(100);
+      pdf.save(filename);
+    } catch (err) {
+      console.error("PDF generation error: ", err);
+      alert("PDF 생성을 진행하는 중 오류가 발생했습니다.");
+    } finally {
+      setIsGeneratingPDF(false);
+      tempDiv.remove();
+    }
+  };
+
   const handleSaveQuestion = async () => {
     if (!selectedQuestion || !selectedExamId) return;
 
@@ -803,6 +1173,38 @@ export default function App() {
               
               <div className="mt-4 text-[11px] text-center text-slate-400 italic">
                 데이터를 처리하고 있습니다. 잠시만 기다려 주세요.
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PDF Generation Progress Overlay */}
+      <AnimatePresence>
+        {isGeneratingPDF && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          >
+            <div className="bg-white p-8 rounded-none border-2 border-[#141414] shadow-[10px_10px_0_rgba(0,0,0,1)] w-[400px]">
+              <div className="text-center mb-6">
+                <div className="text-lg font-bold mb-2 text-[#141414]">PDF 리포트 생성 중입니다</div>
+                <div className="text-xs font-bold text-slate-500 mb-1">{pdfProgressText}</div>
+                <div className="text-sm font-black text-indigo-600 font-mono">진행률: {pdfProgressPercent}%</div>
+              </div>
+              
+              <div className="h-4 w-full bg-[#EEE] border border-[#141414] rounded-none overflow-hidden relative">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${pdfProgressPercent}%` }}
+                  className="h-full bg-indigo-600"
+                />
+              </div>
+              
+              <div className="mt-4 text-[11px] text-center text-slate-400 italic font-semibold">
+                고품질 PDF 문서 및 레이아웃을 생성하고 있습니다.<br />잠시만 기다려 주세요.
               </div>
             </div>
           </motion.div>
@@ -923,7 +1325,7 @@ export default function App() {
                       >
                         <div className="col-span-1 p-3 text-center font-mono text-[11px] text-slate-400 border-r border-[#F0F0F0]">{String(allRows.length - index).padStart(2, '0')}</div>
                         <div className="col-span-4 p-3 flex items-center gap-2 border-r border-[#F0F0F0]">
-                           <span className="font-bold text-[#141414] truncate">
+                           <span className="font-bold text-[#141414] truncate text-[14px]">
                             {examWithLevel.round} 한국사능력검정시험
                            </span>
                            {index < 3 && examWithLevel.isVisible !== false && (
@@ -931,7 +1333,7 @@ export default function App() {
                            )}
                         </div>
                         <div className="col-span-2 p-3 flex justify-center border-r border-[#F0F0F0]">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-sm font-bold border ${
+                          <span className={`text-[14px] px-2 py-0.5 rounded-sm font-bold border ${
                             examWithLevel.displayLevel === '심화' 
                             ? 'bg-indigo-50 text-indigo-600 border-indigo-100' 
                             : 'bg-emerald-50 text-emerald-600 border-emerald-100'
@@ -939,7 +1341,7 @@ export default function App() {
                             {examWithLevel.displayLevel}
                           </span>
                         </div>
-                        <div className="col-span-1.5 p-3 text-center text-slate-500 font-mono text-[10px]">
+                        <div className="col-span-1.5 p-3 text-center text-slate-500 font-mono text-[14px]">
                           {examWithLevel.createdAt ? new Date(examWithLevel.createdAt.seconds * 1000).toLocaleDateString('ko-KR') : '2026.04.19'}
                         </div>
                         <div className="col-span-1.5 p-3 flex justify-center">
@@ -1090,6 +1492,13 @@ export default function App() {
               <Button variant="outline" className="h-9 rounded-none border-[#141414] text-xs font-bold gap-2" onClick={downloadExcelTemplate}>
                 <Download className="w-3.5 h-3.5" /> 양식 다운로드
               </Button>
+              <Button 
+                variant="outline" 
+                className="h-9 rounded-none border-[#141414] text-xs font-bold gap-2 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" 
+                onClick={downloadAllQuestionsPDF}
+              >
+                <Download className="w-3.5 h-3.5" /> 일괄 내려받기
+              </Button>
             </div>
           </div>
 
@@ -1133,8 +1542,22 @@ export default function App() {
                           <div className="col-span-4 p-2.5 truncate text-sm">
                             {q?.title || <span className="text-slate-300 italic">문항을 입력하세요</span>}
                           </div>
-                          <div className="col-span-2 p-2.5 flex justify-end">
-                            <Button variant="outline" size="sm" className="h-7 text-xs rounded-none border-[#141414] px-2">
+                          <div className="col-span-2 p-2.5 flex justify-end items-center gap-1.5">
+                            {q && (
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-7 w-7 rounded-none hover:bg-slate-100 text-slate-500 shrink-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadSingleQuestionPDF(q);
+                                }}
+                                title="문항 내려받기"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            <Button variant="outline" size="sm" className="h-7 text-xs rounded-none border-[#141414] px-2 shrink-0">
                               {q ? '수정' : '+ 입력'}
                             </Button>
                           </div>
@@ -1230,15 +1653,26 @@ export default function App() {
                   </CardTitle>
 
                   {selectedQuestion && (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => seedSingleDummy(selectedQuestion.number)}
-                      className="h-7 rounded-none border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 text-[10px] font-bold px-3 gap-1.5"
-                    >
-                      <Sparkles className="w-3 h-3" />
-                      예시 데이터 생성
-                    </Button>
+                    <div className="flex items-center gap-1.5">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => downloadSingleQuestionPDF(selectedQuestion)}
+                        className="h-7 rounded-none border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 text-[10px] font-bold px-3 gap-1.5"
+                      >
+                        <Download className="w-3 h-3" />
+                        문항 내려받기
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => seedSingleDummy(selectedQuestion.number)}
+                        className="h-7 rounded-none border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 text-[10px] font-bold px-3 gap-1.5"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        예시 데이터 생성
+                      </Button>
+                    </div>
                   )}
                   {selectedQuestion && (
                     <div className="flex items-center gap-1 border-x border-[#D1D1CF] px-4">
