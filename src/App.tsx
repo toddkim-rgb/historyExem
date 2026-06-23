@@ -104,6 +104,7 @@ export default function App() {
   const [pdfProgressText, setPdfProgressText] = useState('');
   const [pdfProgressPercent, setPdfProgressPercent] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bulkExcelInputRef = useRef<HTMLInputElement>(null);
   const qImageRef = useRef<HTMLInputElement>(null);
 
   const visibleExams = useMemo(() => {
@@ -633,6 +634,226 @@ export default function App() {
       setIsUploading(false);
       handleFirestoreError(error, 'Excel Upload');
       alert('엑셀 파일 파싱 또는 업로드 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleBulkExcelUpload = async () => {
+    if (!bulkExcelFile || !selectedExamId) {
+      alert("업로드할 엑셀 파일을 선택해주세요.");
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      setUploadProgress(0);
+      
+      const file = bulkExcelFile;
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+      if (jsonData.length === 0) {
+        throw new Error("엑셀 파일에 데이터가 없습니다.");
+      }
+
+      // Fetch all existing questions in the database for this exam to ensure no duplicates across types (general/advanced)
+      const qSnapshot = await getDocs(
+        query(collection(db, 'questions'), where('examId', '==', selectedExamId))
+      );
+      const allExistingQuestions = qSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question));
+
+      const mappedQuestions: Omit<Question, 'id'>[] = jsonData.map((row: any) => ({
+        examId: selectedExamId,
+        type: (row['급수'] === '심화' || (row['급수'] === undefined && activeTab === 'advanced')) ? 'advanced' : 'general',
+        number: parseInt(row['문항ID'] || row['번호'] || row['number'] || 0),
+        era: row['시대'] || row['era'] || '',
+        difficulty: (row['난이도'] || row['difficulty'] || '중') as '상' | '중' | '하',
+        title: row['문항제목'] || row['질문'] || row['title'] || '',
+        keywords: String(row['주제어'] || row['키워드'] || row['keywords'] || '').split(/[,|#]/).map((k: string) => k.trim()).filter(Boolean),
+        imageUrl: row['문항이미지(파일선택)'] || row['이미지URL'] || row['imageUrl'] || '',
+        answer: parseInt(row['정답'] || row['answer'] || 1),
+        score: parseInt(row['배점'] || row['score'] || 2),
+        correctRate: parseInt(row['실제정답률'] || row['정답률'] || row['correctRate'] || 0),
+        explanation: row['해설'] || row['explanation'] || '',
+        category: row['문항유형'] || row['category'] || '역사지식 이해',
+        field: row['분야'] || row['field'] || '정치',
+        etc: row['비고'] || row['etc'] || '',
+        author: row['출제위원'] || row['author'] || '',
+        source: row['출제근거'] || row['source'] || '',
+        ratingGap: row['평정간극'] || row['ratingGap'] || '',
+        expectedCorrectRate: parseInt(row['예상정답률'] || row['expectedCorrectRate'] || 0),
+        accessibleQuestion: row['전맹자용문항'] || row['accessibleQuestion'] || '',
+        imageDescription: row['이미지설명'] || row['imageDescription'] || '',
+        options: row['문항내용텍스트'] 
+          ? row['문항내용텍스트'].split(/[①-⑤]/).filter((s: string) => s.trim().length > 0).map((s: string) => s.trim()).slice(0, 5)
+          : [
+              row['선택지1'] || row['option1'] || '',
+              row['선택지2'] || row['option2'] || '',
+              row['선택지3'] || row['option3'] || '',
+              row['선택지4'] || row['option4'] || '',
+              row['선택지5'] || row['option5'] || '',
+            ]
+      }));
+
+      let count = 0;
+      for (let i = 0; i < mappedQuestions.length; i++) {
+        const q = mappedQuestions[i];
+        if (!q.title || !q.number) continue;
+        
+        // Update if exists, or create new
+        const existingQ = allExistingQuestions.find(item => item.number === q.number && item.type === q.type);
+        if (existingQ && existingQ.id) {
+          await updateDoc(doc(db, 'questions', existingQ.id), q);
+        } else {
+          await addDoc(collection(db, 'questions'), q);
+        }
+        count++;
+        setUploadProgress(Math.round(((i + 1) / mappedQuestions.length) * 100));
+      }
+
+      setIsUploading(false);
+      setBulkUploadStep(2); // Move to Step 2
+      alert(`성공: ${count}개의 문항 엑셀 데이터를 정상적으로 읽고 데이터베이스에 업로드하였습니다.\n다음 단계인 이미지 일괄 업로드를 진행해 주세요.`);
+    } catch (error) {
+      setIsUploading(false);
+      handleFirestoreError(error, 'Bulk Excel Upload');
+      alert('엑셀 파일 파싱 또는 업로드 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleBulkImageUpload = async () => {
+    if (!selectedExamId) return;
+
+    if (bulkImageFiles.length === 0) {
+      setIsBulkUploadOpen(false);
+      alert('이미지가 선택되지 않아, 엑셀 등록 데이터만 반영되었습니다.');
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      // Fetch latest questions list
+      const qSnapshot = await getDocs(
+        query(collection(db, 'questions'), where('examId', '==', selectedExamId))
+      );
+      const latestQuestions = qSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question));
+
+      const totalFiles = bulkImageFiles.length;
+      let matchCount = 0;
+
+      for (let i = 0; i < totalFiles; i++) {
+        const file = bulkImageFiles[i];
+        
+        // Match files like '68_01_1.png' or '68_advanced_12.jpg'
+        const name = file.name.substring(0, file.name.lastIndexOf('.')).toLowerCase();
+        const parts = name.split('_');
+        
+        let detectedNum = 0;
+        let detectedType: 'general' | 'advanced' | null = null;
+        
+        if (parts.length >= 3) {
+          detectedNum = parseInt(parts[2]) || 0;
+          const typePart = parts[1];
+          if (typePart === '02' || typePart === 'advanced' || typePart.includes('심화')) {
+            detectedType = 'advanced';
+          } else if (typePart === '01' || typePart === 'general' || typePart.includes('기본')) {
+            detectedType = 'general';
+          }
+        } else if (parts.length === 2) {
+          const p0 = parts[0];
+          const p1 = parts[1];
+          
+          if (p1.includes('심화') || p1 === 'advanced' || p1 === '02') {
+            detectedType = 'advanced';
+            detectedNum = parseInt(p0) || 0;
+          } else if (p1.includes('기본') || p1 === 'general' || p1 === '01') {
+            detectedType = 'general';
+            detectedNum = parseInt(p0) || 0;
+          } else if (p0.includes('심화') || p0 === 'advanced' || p0 === '02') {
+            detectedType = 'advanced';
+            detectedNum = parseInt(p1) || 0;
+          } else if (p0.includes('기본') || p0 === 'general' || p0 === '01') {
+            detectedType = 'general';
+            detectedNum = parseInt(p1) || 0;
+          } else {
+            const num1 = parseInt(p1);
+            const num0 = parseInt(p0);
+            if (!isNaN(num1)) detectedNum = num1;
+            else if (!isNaN(num0)) detectedNum = num0;
+          }
+        } else if (parts.length === 1) {
+          const digits = name.match(/\d+/);
+          if (digits) {
+            detectedNum = parseInt(digits[0]);
+          }
+          if (name.includes('심화') || name.includes('advanced')) {
+            detectedType = 'advanced';
+          } else if (name.includes('기본') || name.includes('general')) {
+            detectedType = 'general';
+          }
+        }
+        
+        if (!detectedType) {
+          detectedType = activeTab;
+        }
+
+        if (detectedNum > 0) {
+          const targetQuestion = latestQuestions.find(
+            q => q.number === detectedNum && q.type === detectedType
+          );
+
+          if (targetQuestion && targetQuestion.id) {
+            const base64Data = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = (event) => {
+                const result = event.target?.result as string;
+                const img = new Image();
+                img.onload = () => {
+                  const canvas = document.createElement('canvas');
+                  let width = img.width;
+                  let height = img.height;
+                  const MAX_WIDTH = 1000;
+                  if (width > MAX_WIDTH) {
+                    height = (MAX_WIDTH / width) * height;
+                    width = MAX_WIDTH;
+                  }
+                  canvas.width = width;
+                  canvas.height = height;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    ctx.drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/jpeg', 0.6));
+                  } else {
+                    reject(new Error('Canvas context is null'));
+                  }
+                };
+                img.onerror = () => reject(new Error('Image load fail'));
+                img.src = result;
+              };
+              reader.onerror = () => reject(new Error('FileReader fail'));
+              reader.readAsDataURL(file);
+            });
+
+            await updateDoc(doc(db, 'questions', targetQuestion.id), {
+              imageUrl: base64Data
+            });
+            matchCount++;
+          }
+        }
+
+        setUploadProgress(Math.round(((i + 1) / totalFiles) * 100));
+      }
+
+      setIsUploading(false);
+      setIsBulkUploadOpen(false);
+      alert(`일괄 업로드 완료: 총 ${totalFiles}개의 이미지 파일 중 ${matchCount}개의 문항 이미지가 정상 매치 및 업데이트 하였습니다.`);
+    } catch (err) {
+      console.error(err);
+      setIsUploading(false);
+      alert('이미지 파일 프로세싱 또는 업로드 중 오류가 발생했습니다.');
     }
   };
 
@@ -2229,12 +2450,12 @@ export default function App() {
                     "border-2 border-dashed rounded-lg p-8 cursor-pointer transition-all bg-white relative",
                     bulkExcelFile ? "border-emerald-500 bg-emerald-50/20" : "border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50/30"
                   )}
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => bulkExcelInputRef.current?.click()}
                 >
                   <input
                     type="file"
                     className="hidden"
-                    ref={fileInputRef}
+                    ref={bulkExcelInputRef}
                     accept=".xlsx, .xls"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
@@ -2353,17 +2574,14 @@ export default function App() {
               {bulkUploadStep === 1 ? (
                 <Button 
                   className="px-8 h-10 rounded-none bg-[#141414] hover:bg-slate-800 text-white text-xs font-black flex items-center gap-2"
-                  onClick={() => setBulkUploadStep(2)}
+                  onClick={handleBulkExcelUpload}
                 >
                   다음 <ChevronRight className="w-4 h-4" />
                 </Button>
               ) : (
                 <Button 
                   className="px-8 h-10 rounded-none bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-2"
-                  onClick={() => {
-                    alert('업로드가 완료되었습니다.');
-                    setIsBulkUploadOpen(false);
-                  }}
+                  onClick={handleBulkImageUpload}
                 >
                   업로드 완료 <Check className="w-4 h-4" />
                 </Button>
