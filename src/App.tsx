@@ -103,6 +103,10 @@ export default function App() {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [pdfProgressText, setPdfProgressText] = useState('');
   const [pdfProgressPercent, setPdfProgressPercent] = useState(0);
+  const [isDownloadSettingsOpen, setIsDownloadSettingsOpen] = useState(false);
+  const [downloadScope, setDownloadScope] = useState<'all' | 'general' | 'advanced'>('all');
+  const [downloadQuestionsList, setDownloadQuestionsList] = useState<(Question & { checked: boolean })[]>([]);
+  const [isFetchingDownloadList, setIsFetchingDownloadList] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bulkExcelInputRef = useRef<HTMLInputElement>(null);
   const qImageRef = useRef<HTMLInputElement>(null);
@@ -117,6 +121,10 @@ export default function App() {
       })
       .slice(0, 15);
   }, [exams]);
+
+  const currentExam = useMemo(() => {
+    return exams.find(e => e.id === selectedExamId);
+  }, [exams, selectedExamId]);
 
   // Helper for Firestore Errors
   const handleFirestoreError = (error: any, operation: string) => {
@@ -1091,6 +1099,148 @@ export default function App() {
     `;
   };
 
+  const openDownloadSettings = async () => {
+    if (!selectedExamId) {
+      alert("다운로드 설정을 위해 회차를 먼저 선택해주세요.");
+      return;
+    }
+    setIsDownloadSettingsOpen(true);
+    setIsFetchingDownloadList(true);
+    try {
+      const qSnapshot = await getDocs(
+        query(collection(db, 'questions'), where('examId', '==', selectedExamId))
+      );
+      const allQuestions = qSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Question));
+      
+      // Sort level ('general' first, 'advanced' second) and then by number
+      allQuestions.sort((a, b) => {
+        if (a.type !== b.type) {
+          return a.type === 'general' ? -1 : 1;
+        }
+        return a.number - b.number;
+      });
+
+      setDownloadQuestionsList(allQuestions.map(q => ({ ...q, checked: true })));
+    } catch (error) {
+      console.error("Error loading questions for download settings:", error);
+      alert("문항 목록을 불러오는 중 오류가 발생했습니다.");
+    } finally {
+      setIsFetchingDownloadList(false);
+    }
+  };
+
+  const downloadFilteredQuestionsPDF = async () => {
+    const exam = exams.find(e => e.id === selectedExamId);
+    if (!exam) return;
+
+    // Filter by downloadScope and checked status
+    const targetQuestions = downloadQuestionsList.filter(q => {
+      if (downloadScope === 'general' && q.type !== 'general') return false;
+      if (downloadScope === 'advanced' && q.type !== 'advanced') return false;
+      return q.checked;
+    });
+
+    if (targetQuestions.length === 0) {
+      alert("선택된 문항이 없습니다. 하나 이상의 문항을 체크해주세요.");
+      return;
+    }
+
+    setIsDownloadSettingsOpen(false);
+    setIsGeneratingPDF(true);
+    setPdfProgressText(`선택된 문항 PDF 생성 중...`);
+    setPdfProgressPercent(5);
+
+    try {
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const roundName = `${exam.round} 한국사능력검정시험`;
+
+      for (let index = 0; index < targetQuestions.length; index++) {
+        const q = targetQuestions[index];
+        const progress = Math.round(5 + (index / targetQuestions.length) * 90);
+        setPdfProgressText(`[총 ${targetQuestions.length}문항 중 ${index + 1}번째] ${q.number}번 문항 처리 중...`);
+        setPdfProgressPercent(progress);
+
+        // Render this question to a sandbox div
+        const tempDiv = document.createElement('div');
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-9999px';
+        tempDiv.style.top = '-9999px';
+        tempDiv.style.width = '790px';
+        tempDiv.style.background = '#ffffff';
+        tempDiv.innerHTML = createQuestionHtml(q, roundName);
+        document.body.appendChild(tempDiv);
+
+        // Wait for images
+        await new Promise<void>((resolve) => {
+          const imgs = tempDiv.getElementsByTagName('img');
+          if (imgs.length === 0) return resolve();
+          let loaded = 0;
+          const total = imgs.length;
+          const check = () => {
+            loaded++;
+            if (loaded >= total) resolve();
+          };
+          for (let i = 0; i < imgs.length; i++) {
+            if (imgs[i].complete) {
+              check();
+            } else {
+              imgs[i].onload = check;
+              imgs[i].onerror = check;
+            }
+          }
+        });
+
+        const canvas = await html2canvas(tempDiv, {
+          scale: 1.5,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff'
+        });
+
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = 210;
+        const pageHeight = 295;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        if (index > 0) {
+          pdf.addPage();
+        }
+
+        // Draw onto the current page
+        pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, 'FAST');
+        
+        // If question content is taller than 1 A4 page, slide onto additional heights
+        if (imgHeight > pageHeight) {
+          let heightLeft = imgHeight - pageHeight;
+          let position = -pageHeight;
+          while (heightLeft > 0) {
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+            heightLeft -= pageHeight;
+            position -= pageHeight;
+          }
+        }
+
+        tempDiv.remove();
+      }
+
+      setPdfProgressPercent(98);
+      setPdfProgressText(`PDF 파일 다운로드 시작...`);
+      
+      let suffix = "";
+      if (downloadScope === 'general') suffix = "_기본";
+      else if (downloadScope === 'advanced') suffix = "_심화";
+      else suffix = "_전체";
+      
+      pdf.save(`${exam.round}_한능검${suffix}_문항선택.pdf`);
+    } catch (error) {
+      console.error("Error generating filtered PDF:", error);
+      alert("PDF 생성 중 오류가 발생했습니다.");
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
   const downloadAllQuestionsPDF = async () => {
     if (!selectedExamId) {
       alert("다운로드할 회차를 선택해주세요.");
@@ -1716,7 +1866,7 @@ export default function App() {
               <Button 
                 variant="outline" 
                 className="h-9 rounded-none border-[#141414] text-xs font-bold gap-2 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" 
-                onClick={downloadAllQuestionsPDF}
+                onClick={openDownloadSettings}
               >
                 <Download className="w-3.5 h-3.5" /> 일괄 내려받기
               </Button>
@@ -2627,6 +2777,212 @@ export default function App() {
             >
               삭제 승인
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 일괄 PDF 내려받기 설정 다이얼로그 */}
+      <Dialog open={isDownloadSettingsOpen} onOpenChange={setIsDownloadSettingsOpen}>
+        <DialogContent className="max-w-[700px] w-[700px] max-h-[85vh] h-[680px] p-0 overflow-hidden flex flex-col rounded-none border-2 border-[#141414]">
+          <div className="bg-[#1A1A1A] p-4 flex items-center justify-between text-white border-b-2 border-[#141414] shrink-0">
+            <div className="flex items-center gap-2">
+              <Download className="w-4 h-4 text-[#D4AF37]" />
+              <h2 className="text-sm font-black tracking-wider">일괄 PDF 내려받기 설정</h2>
+            </div>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10 rounded-none"
+              onClick={() => setIsDownloadSettingsOpen(false)}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+
+          <div className="flex-1 overflow-hidden flex flex-col p-6 bg-[#F9F9F8] gap-4">
+            {/* 회차정보 표기 */}
+            {currentExam && (
+              <div className="bg-amber-50 border-2 border-amber-200 p-4 shrink-0 flex items-center justify-between shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <span className="bg-amber-600 text-white text-[10px] font-black px-2 py-0.5 tracking-tight uppercase">선택 회차</span>
+                  <span className="text-xs font-black text-slate-800">{currentExam.round} 한국사능력검정시험 기출문제</span>
+                </div>
+                <span className="text-[10px] font-bold text-amber-800 bg-amber-100/50 px-2 py-0.5">
+                  총 {downloadQuestionsList.length}개 문항 등록됨
+                </span>
+              </div>
+            )}
+
+            {/* Step 1: Select Scope */}
+            <div className="bg-white p-4 border border-[#D1D1CF] space-y-3 shrink-0">
+              <div className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full"></span>
+                1. 시험급수 선택 (기본/심화 나누어 일괄 다운로드 가능)
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'all', label: '전체 문항 (기본 + 심화)' },
+                  { id: 'general', label: '기본 문항만' },
+                  { id: 'advanced', label: '심화 문항만' }
+                ].map((scope) => (
+                  <button
+                    key={scope.id}
+                    onClick={() => setDownloadScope(scope.id as any)}
+                    className={cn(
+                      "py-2 px-3 text-xs font-black border transition-all text-center rounded-none",
+                      downloadScope === scope.id 
+                        ? "bg-indigo-600 border-indigo-600 text-white shadow-[2px_2px_0_rgba(0,0,0,0.15)]"
+                        : "bg-white border-[#D1D1CF] text-slate-700 hover:bg-slate-50"
+                    )}
+                  >
+                    {scope.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Step 2: Select/Exclude Questions */}
+            <div className="flex-1 bg-white border border-[#D1D1CF] flex flex-col overflow-hidden">
+              <div className="p-3 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/50">
+                <div className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full"></span>
+                  2. 다운로드 문항 선택 (체크 해제된 문항은 제외됨)
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] rounded-none px-2 font-bold"
+                    onClick={() => {
+                      // Toggle checked for visible filtered ones
+                      const updated = downloadQuestionsList.map(q => {
+                        const matchesScope = 
+                          downloadScope === 'all' || 
+                          (downloadScope === 'general' && q.type === 'general') ||
+                          (downloadScope === 'advanced' && q.type === 'advanced');
+                        if (matchesScope) {
+                          return { ...q, checked: true };
+                        }
+                        return q;
+                      });
+                      setDownloadQuestionsList(updated);
+                    }}
+                  >
+                    전체 선택
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] rounded-none px-2 font-bold"
+                    onClick={() => {
+                      const updated = downloadQuestionsList.map(q => {
+                        const matchesScope = 
+                          downloadScope === 'all' || 
+                          (downloadScope === 'general' && q.type === 'general') ||
+                          (downloadScope === 'advanced' && q.type === 'advanced');
+                        if (matchesScope) {
+                          return { ...q, checked: false };
+                        }
+                        return q;
+                      });
+                      setDownloadQuestionsList(updated);
+                    }}
+                  >
+                    전체 해제
+                  </Button>
+                </div>
+              </div>
+
+              {isFetchingDownloadList ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-2">
+                  <div className="animate-spin rounded-full h-6 w-6 border-2 border-indigo-600 border-t-transparent" />
+                  <span className="text-xs font-bold">문항 목록을 불러오는 중...</span>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
+                  <div className="grid grid-cols-2 gap-2">
+                    {downloadQuestionsList
+                      .filter(q => {
+                        if (downloadScope === 'general' && q.type !== 'general') return false;
+                        if (downloadScope === 'advanced' && q.type !== 'advanced') return false;
+                        return true;
+                      })
+                      .map((q) => (
+                        <div 
+                          key={`${q.id}-${q.type}-${q.number}`}
+                          onClick={() => {
+                            setDownloadQuestionsList(prev => prev.map(item => 
+                              (item.id === q.id && item.type === q.type && item.number === q.number)
+                                ? { ...item, checked: !item.checked }
+                                : item
+                            ));
+                          }}
+                          className={cn(
+                            "p-2.5 border transition-all cursor-pointer flex items-start gap-2.5",
+                            q.checked 
+                              ? "border-indigo-200 bg-indigo-50/20" 
+                              : "border-slate-100 bg-white opacity-60 hover:opacity-100"
+                          )}
+                        >
+                          <input 
+                            type="checkbox"
+                            checked={q.checked}
+                            readOnly
+                            className="mt-0.5 rounded border-[#D1D1CF] text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5 cursor-pointer"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="text-[11px] font-black text-slate-800">문항 {String(q.number).padStart(2, '0')}</span>
+                              <span className={cn(
+                                "px-1.5 py-0.5 rounded-none text-[8px] font-black uppercase tracking-tight",
+                                q.type === 'advanced' ? "bg-indigo-100 text-indigo-700" : "bg-blue-100 text-blue-700"
+                              )}>
+                                {q.type === 'advanced' ? '심화' : '기본'}
+                              </span>
+                              <span className="text-[9px] font-bold text-slate-400">{q.difficulty || '중'} • {q.score || 2}점</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-bold truncate">
+                              {q.title || '제목 없음'}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+            <div className="text-[11px] text-slate-500 font-bold">
+              선택된 문항수: <span className="text-indigo-600 font-black">
+                {downloadQuestionsList.filter(q => {
+                  if (downloadScope === 'general' && q.type !== 'general') return false;
+                  if (downloadScope === 'advanced' && q.type !== 'advanced') return false;
+                  return q.checked;
+                }).length}
+              </span> / {downloadQuestionsList.filter(q => {
+                if (downloadScope === 'general' && q.type !== 'general') return false;
+                if (downloadScope === 'advanced' && q.type !== 'advanced') return false;
+                return true;
+              }).length} 문항
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Button 
+                variant="outline"
+                className="h-10 rounded-none border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-black px-4"
+                onClick={() => setIsDownloadSettingsOpen(false)}
+              >
+                취소
+              </Button>
+              <Button 
+                className="h-10 rounded-none bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black px-6 flex items-center gap-1.5 shadow-[3px_3px_0_rgba(0,0,0,0.15)]"
+                onClick={downloadFilteredQuestionsPDF}
+                disabled={isFetchingDownloadList}
+              >
+                <Download className="w-4 h-4" /> PDF 다운로드 시작
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
