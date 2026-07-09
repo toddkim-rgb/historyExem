@@ -111,15 +111,62 @@ export default function App() {
   const bulkExcelInputRef = useRef<HTMLInputElement>(null);
   const qImageRef = useRef<HTMLInputElement>(null);
 
-  const visibleExams = useMemo(() => {
+  const visibleAdvancedExams = useMemo(() => {
     return exams
-      .filter(e => e.isVisible !== false)
+      .filter(e => 
+        e.isVisible !== false && 
+        e.isVisibleAdvanced !== false &&
+        (!e.levels || e.levels.length === 0 || e.levels.includes('심화'))
+      )
       .sort((a, b) => {
         const rA = parseInt(a.round.replace(/[^0-9]/g, '')) || 0;
         const rB = parseInt(b.round.replace(/[^0-9]/g, '')) || 0;
         return rB - rA;
       })
       .slice(0, 15);
+  }, [exams]);
+
+  const visibleGeneralExams = useMemo(() => {
+    return exams
+      .filter(e => 
+        e.isVisible !== false && 
+        e.isVisibleGeneral !== false &&
+        (!e.levels || e.levels.length === 0 || e.levels.includes('기본'))
+      )
+      .sort((a, b) => {
+        const rA = parseInt(a.round.replace(/[^0-9]/g, '')) || 0;
+        const rB = parseInt(b.round.replace(/[^0-9]/g, '')) || 0;
+        return rB - rA;
+      })
+      .slice(0, 15);
+  }, [exams]);
+
+  const visibleExams = useMemo(() => {
+    const ids = new Set([
+      ...visibleAdvancedExams.map(e => e.id),
+      ...visibleGeneralExams.map(e => e.id)
+    ]);
+    return exams.filter(e => ids.has(e.id)).sort((a, b) => {
+      const rA = parseInt(a.round.replace(/[^0-9]/g, '')) || 0;
+      const rB = parseInt(b.round.replace(/[^0-9]/g, '')) || 0;
+      return rB - rA;
+    });
+  }, [exams, visibleAdvancedExams, visibleGeneralExams]);
+
+  const exposedAdvancedCount = useMemo(() => {
+    return exams.filter(e => 
+      e.isVisible !== false && 
+      e.isVisibleAdvanced !== false &&
+      (!e.levels || e.levels.length === 0 || e.levels.includes('심화'))
+    ).length;
+  }, [exams]);
+
+  const exposedGeneralCount = useMemo(() => {
+    return exams.filter(e => 
+      e.isVisible !== false && 
+      e.isVisibleGeneral !== false &&
+      (!e.levels || e.levels.length === 0 || e.levels.includes('기본'))
+    ).length;
   }, [exams]);
 
   const currentExam = useMemo(() => {
@@ -215,6 +262,8 @@ export default function App() {
         status: 'draft',
         createdAt: serverTimestamp(),
         isVisible: true,
+        isVisibleAdvanced: true,
+        isVisibleGeneral: true,
         levels: selectedLevels.length > 0 ? selectedLevels : ['심화']
       });
       setSelectedExamId(docRef.id);
@@ -226,10 +275,23 @@ export default function App() {
     }
   };
 
-  const handleToggleVisibility = async (id: string, currentStatus: boolean) => {
+  const handleToggleVisibility = async (id: string, level: string, currentStatus: boolean) => {
     try {
+      const isExposing = !currentStatus;
+      if (isExposing) {
+        if (level === '심화' && exposedAdvancedCount >= 15) {
+          alert('심화 급수는 최대 15회차까지만 노출할 수 있습니다.\n기존 노출 중인 다른 회차를 비노출로 변경한 후 설정해주세요.');
+          return;
+        }
+        if (level === '기본' && exposedGeneralCount >= 15) {
+          alert('기본 급수는 최대 15회차까지만 노출할 수 있습니다.\n기존 노출 중인 다른 회차를 비노출로 변경한 후 설정해주세요.');
+          return;
+        }
+      }
+
+      const fieldToUpdate = level === '심화' ? 'isVisibleAdvanced' : 'isVisibleGeneral';
       await updateDoc(doc(db, 'exams', id), {
-        isVisible: !currentStatus
+        [fieldToUpdate]: isExposing
       });
     } catch (error) {
       handleFirestoreError(error, 'Toggle Visibility');
@@ -1665,8 +1727,13 @@ export default function App() {
                     <Plus className="w-3.5 h-3.5" /> 회차 추가
                   </Button>
                 </div>
-                <div className="text-[10px] text-slate-400 font-medium italic">
-                  * 노출 설정 시 최근 15회차까지 사용자에게 공개됩니다.
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold rounded-sm">
+                    심화 노출: {exposedAdvancedCount} / 15회차
+                  </span>
+                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 font-bold rounded-sm">
+                    기본 노출: {exposedGeneralCount} / 15회차
+                  </span>
                 </div>
               </div>
 
@@ -1689,50 +1756,55 @@ export default function App() {
                     }).flatMap((exam) => {
                       const displayLevels = (!exam.levels || exam.levels.length === 0) ? ['심화', '기본'] : exam.levels;
                       return displayLevels.map(level => ({ ...exam, displayLevel: level }));
-                    }).map((examWithLevel, index, allRows) => (
-                      <div 
-                        key={`${examWithLevel.id}-${examWithLevel.displayLevel}`} 
-                        className={`grid grid-cols-12 items-center hover:bg-[#FFFBF0] transition-colors text-[12px] ${examWithLevel.isVisible === false ? 'bg-slate-50/50' : ''}`}
-                      >
-                        <div className="col-span-1 p-3 text-center font-mono text-[11px] text-slate-400 border-r border-[#F0F0F0]">{String(allRows.length - index).padStart(2, '0')}</div>
-                        <div className="col-span-4 p-3 flex items-center gap-2 border-r border-[#F0F0F0]">
-                           <span className="font-bold text-[#141414] truncate text-[14px]">
-                            {examWithLevel.round} 한국사능력검정시험
-                           </span>
-                           {index < 3 && examWithLevel.isVisible !== false && (
-                             <span className="text-[9px] bg-yellow-400 text-black px-1 font-black uppercase rounded-xs">최신</span>
-                           )}
-                        </div>
-                        <div className="col-span-2 p-3 flex justify-center border-r border-[#F0F0F0]">
-                          <span className={`text-[14px] px-2 py-0.5 rounded-sm font-bold border ${
-                            examWithLevel.displayLevel === '심화' 
-                            ? 'bg-indigo-50 text-indigo-600 border-indigo-100' 
-                            : 'bg-emerald-50 text-emerald-600 border-emerald-100'
-                          }`}>
-                            {examWithLevel.displayLevel}
-                          </span>
-                        </div>
-                        <div className="col-span-1.5 p-3 text-center text-slate-500 font-mono text-[14px]">
-                          {examWithLevel.createdAt ? new Date(examWithLevel.createdAt.seconds * 1000).toLocaleDateString('ko-KR') : '2026.04.19'}
-                        </div>
-                        <div className="col-span-1.5 p-3 flex justify-center">
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={() => handleToggleVisibility(examWithLevel.id, examWithLevel.isVisible !== false)}
-                            className={`h-7 rounded-none px-2 text-[10px] font-bold gap-1 ${
-                              examWithLevel.isVisible !== false 
-                              ? 'text-emerald-600' 
-                              : 'text-slate-400'
-                            }`}
-                          >
-                            {examWithLevel.isVisible !== false ? (
-                              <><Eye className="w-3 h-3" /> 노출</>
-                            ) : (
-                              <><EyeOff className="w-3 h-3" /> 비노출</>
-                            )}
-                          </Button>
-                        </div>
+                    }).map((examWithLevel, index, allRows) => {
+                      const isLevelVisible = examWithLevel.displayLevel === '심화'
+                        ? (examWithLevel.isVisibleAdvanced !== false && examWithLevel.isVisible !== false)
+                        : (examWithLevel.isVisibleGeneral !== false && examWithLevel.isVisible !== false);
+
+                      return (
+                        <div 
+                          key={`${examWithLevel.id}-${examWithLevel.displayLevel}`} 
+                          className={`grid grid-cols-12 items-center hover:bg-[#FFFBF0] transition-colors text-[12px] ${!isLevelVisible ? 'bg-slate-50/50 text-slate-400' : ''}`}
+                        >
+                          <div className="col-span-1 p-3 text-center font-mono text-[11px] text-slate-400 border-r border-[#F0F0F0]">{String(allRows.length - index).padStart(2, '0')}</div>
+                          <div className="col-span-4 p-3 flex items-center gap-2 border-r border-[#F0F0F0]">
+                             <span className={`font-bold truncate text-[14px] ${isLevelVisible ? 'text-[#141414]' : 'text-slate-400'}`}>
+                              {examWithLevel.round} 한국사능력검정시험
+                             </span>
+                             {index < 3 && isLevelVisible && (
+                               <span className="text-[9px] bg-yellow-400 text-black px-1 font-black uppercase rounded-xs">최신</span>
+                             )}
+                          </div>
+                          <div className="col-span-2 p-3 flex justify-center border-r border-[#F0F0F0]">
+                            <span className={`text-[14px] px-2 py-0.5 rounded-sm font-bold border ${
+                              examWithLevel.displayLevel === '심화' 
+                              ? 'bg-indigo-50 text-indigo-600 border-indigo-100' 
+                              : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                            }`}>
+                              {examWithLevel.displayLevel}
+                            </span>
+                          </div>
+                          <div className="col-span-1.5 p-3 text-center text-slate-500 font-mono text-[14px]">
+                            {examWithLevel.createdAt ? new Date(examWithLevel.createdAt.seconds * 1000).toLocaleDateString('ko-KR') : '2026.04.19'}
+                          </div>
+                          <div className="col-span-1.5 p-3 flex justify-center">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={() => handleToggleVisibility(examWithLevel.id, examWithLevel.displayLevel, isLevelVisible)}
+                              className={`h-7 rounded-none px-2 text-[10px] font-bold gap-1 ${
+                                isLevelVisible 
+                                ? 'text-emerald-600' 
+                                : 'text-slate-400'
+                              }`}
+                            >
+                              {isLevelVisible ? (
+                                <><Eye className="w-3 h-3" /> 노출</>
+                              ) : (
+                                <><EyeOff className="w-3 h-3" /> 비노출</>
+                              )}
+                            </Button>
+                          </div>
                         <div className="col-span-2 p-3 flex justify-center items-center gap-1">
                           <Button 
                             variant="outline" 
@@ -1773,7 +1845,8 @@ export default function App() {
                           </Button>
                         </div>
                       </div>
-                    ))}
+                    );
+                  })}
                   </div>
                 </div>
               </Card>
@@ -2107,8 +2180,8 @@ export default function App() {
                                 </div>
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">출제위원</Label>
-                                <div className="text-sm font-bold truncate">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">출제위원 (출력값)</Label>
+                                <div className="text-sm font-bold truncate text-yellow-300">
                                   {selectedQuestion.author || auth.currentUser?.displayName || '한능검 관리자'}
                                 </div>
                               </div>
@@ -2217,15 +2290,26 @@ export default function App() {
                                 </Select>
                               </div>
                             </div>
-                            <div className="space-y-1">
-                              <Label className="text-[11px] font-bold">출제 근거</Label>
-                              <Input 
-                                className="rounded-none border-[#D1D1CF] h-8 text-sm" 
-                                value={selectedQuestion.source || ''}
-                                onChange={(e) => setSelectedQuestion({...selectedQuestion, source: e.target.value})}
-                                placeholder="예: 기출 60회 1번 응용" 
-                              />
-                            </div>
+                             <div className="grid grid-cols-2 gap-4">
+                               <div className="space-y-1">
+                                 <Label className="text-[11px] font-bold">문항 출제 위원</Label>
+                                 <Input 
+                                   className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                   value={selectedQuestion.author || ''}
+                                   onChange={(e) => setSelectedQuestion({...selectedQuestion, author: e.target.value})}
+                                   placeholder="예: 홍길동 위원" 
+                                 />
+                               </div>
+                               <div className="space-y-1">
+                                 <Label className="text-[11px] font-bold">출제 근거</Label>
+                                 <Input 
+                                   className="rounded-none border-[#D1D1CF] h-8 text-sm" 
+                                   value={selectedQuestion.source || ''}
+                                   onChange={(e) => setSelectedQuestion({...selectedQuestion, source: e.target.value})}
+                                   placeholder="예: 기출 60회 1번 응용" 
+                                 />
+                               </div>
+                             </div>
 
                             <div className="space-y-1">
                               <Label className="text-[11px] font-bold">키워드</Label>

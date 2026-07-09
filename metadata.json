@@ -2,5 +2,5 @@
   "name": "한국사능력검정시험 관리자 시스템",
   "description": "한국사능력검정시험 기출문제 업로드 및 관리를 위한 관리자 전용 인터페이스",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -4,6 +4,8 @@ export interface Exam {
   status: 'draft' | 'published';
   createdAt: any;
   isVisible?: boolean;
+  isVisibleAdvanced?: boolean;
+  isVisibleGeneral?: boolean;
   levels?: string[];
 }
 

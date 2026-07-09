@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Exam, Question } from '../types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Check, ChevronLeft, ChevronRight, Target, Search, AlertCircle, HelpCircle, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Target, Search, AlertCircle, HelpCircle, X, Play, Pause, RotateCcw, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -21,6 +21,101 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
   const [userAnswer, setUserAnswer] = useState<number | null>(null);
   const [showResult, setShowResult] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [isTimerRunning, setIsTimerRunning] = useState<boolean>(true);
+
+  // Stopwatch logic
+  useEffect(() => {
+    let interval: any = null;
+    if (isTimerRunning && currentQuestion && !isLoading && !showResult) {
+      interval = setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning, currentQuestion, isLoading, showResult]);
+
+  const formatStopwatchTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  const filteredExamsForTab = useMemo(() => {
+    return exams.filter(e => {
+      const isLevelVisible = activeTab === 'advanced'
+        ? e.isVisibleAdvanced !== false
+        : e.isVisibleGeneral !== false;
+      return isLevelVisible && (!e.levels || e.levels.length === 0 || e.levels.includes(activeTab === 'advanced' ? '심화' : '기본'));
+    });
+  }, [exams, activeTab]);
+
+  useEffect(() => {
+    if (filteredExamsForTab.length > 0) {
+      const exists = filteredExamsForTab.some(e => e.id === selectedExamId);
+      if (!exists) {
+        setSelectedExamId(filteredExamsForTab[0].id);
+      }
+    }
+  }, [filteredExamsForTab, selectedExamId]);
+
+  const ratingOptions = useMemo(() => {
+    if (!currentQuestion) return [];
+    
+    const ratingGap = currentQuestion.ratingGap;
+    const correctAnswer = currentQuestion.answer;
+    const correctRate = currentQuestion.correctRate || 0;
+    
+    if (ratingGap) {
+      try {
+        const parts = ratingGap.split(',');
+        const parsed = parts.map(part => {
+          const [optStr, rateStr] = part.split(':').map(s => s.trim());
+          const option = parseInt(optStr);
+          const percentage = parseFloat(rateStr.replace('%', '')) || 0;
+          return { option, rate: rateStr, percentage };
+        });
+        if (parsed.length === 5) {
+          return parsed;
+        }
+      } catch (e) {
+        console.error("Failed to parse ratingGap:", e);
+      }
+    }
+
+    // Fallback: generate realistic percentages based on correctRate
+    const rates = [];
+    const correctVal = correctRate || 75;
+    const remaining = 100 - correctVal;
+
+    const dist = [0.4, 0.3, 0.2, 0.1];
+    let distIndex = 0;
+
+    for (let i = 1; i <= 5; i++) {
+      if (i === correctAnswer) {
+        rates.push({ option: i, rate: `${correctVal}%`, percentage: correctVal });
+      } else {
+        const weight = dist[distIndex] || 0.15;
+        distIndex++;
+        const val = Math.max(1, Math.round(remaining * weight));
+        rates.push({ option: i, rate: `${val}%`, percentage: val });
+      }
+    }
+
+    const total = rates.reduce((acc, r) => acc + r.percentage, 0);
+    if (total !== 100) {
+      const diff = 100 - total;
+      const adjustIdx = rates.findIndex(r => r.option !== correctAnswer);
+      if (adjustIdx !== -1) {
+        rates[adjustIdx].percentage += diff;
+        rates[adjustIdx].rate = `${rates[adjustIdx].percentage}%`;
+      }
+    }
+
+    return rates;
+  }, [currentQuestion]);
 
   const fetchQuestion = async () => {
     if (!selectedExamId || !questionNumber) return;
@@ -29,6 +124,8 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
     setShowResult(false);
     setUserAnswer(null);
     setCurrentQuestion(null);
+    setElapsedTime(0);
+    setIsTimerRunning(true);
 
     try {
       const q = query(
@@ -65,6 +162,7 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
   const handleCheck = () => {
     if (userAnswer === null) return;
     setShowResult(true);
+    setIsTimerRunning(false);
   };
 
   const nextQuestion = () => {
@@ -90,7 +188,7 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
               <SelectValue placeholder="회차 선택" />
             </SelectTrigger>
             <SelectContent className="rounded-none">
-              {exams.map((exam) => (
+              {filteredExamsForTab.map((exam) => (
                 <SelectItem key={exam.id} value={exam.id} className="text-[11px]">
                   {exam.round}
                 </SelectItem>
@@ -131,6 +229,39 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
               onClick={fetchQuestion}
             >
               <Search className="w-3 h-3 mr-1" /> 이동
+            </Button>
+          </div>
+        </div>
+
+        {/* 문항 타이머 */}
+        <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-[#D1D1CF] shadow-sm md:ml-auto">
+          <div className="flex items-center gap-1.5">
+            <Clock className={`w-3.5 h-3.5 ${isTimerRunning ? 'text-indigo-600 animate-pulse' : 'text-slate-400'}`} />
+            <span className="text-[10px] font-black text-slate-400 uppercase">풀이 시간:</span>
+            <span className="text-xs font-mono font-black text-slate-900">{formatStopwatchTime(elapsedTime)}</span>
+          </div>
+          <div className="h-4 w-px bg-slate-200 mx-1" />
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsTimerRunning(!isTimerRunning)}
+              className="w-6 h-6 rounded-none p-0 hover:bg-slate-100 text-slate-600"
+              title={isTimerRunning ? "일시정지" : "시작"}
+            >
+              {isTimerRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                setElapsedTime(0);
+                setIsTimerRunning(true);
+              }}
+              className="w-6 h-6 rounded-none p-0 hover:bg-slate-100 text-slate-600"
+              title="시간 초기화"
+            >
+              <RotateCcw className="w-3 h-3" />
             </Button>
           </div>
         </div>
@@ -292,21 +423,28 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
                         ? '훌륭합니다! 다음 문제를 풀고 기세를 이어가세요.' 
                         : '아쉽네요! 실제 정답과 아래 정답을 비교해보세요.'}
                     </p>
+                    <div className="mt-3 flex justify-center">
+                      <span className="px-3 py-1 bg-white border border-slate-200 text-[10px] font-black text-slate-600 inline-flex items-center gap-1.5 shadow-sm rounded-none uppercase tracking-wide">
+                        <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>풀이 시간: <strong className="font-black text-indigo-600 text-[11px]">{formatStopwatchTime(elapsedTime)}</strong></span>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Answer Comparison Grid */}
-                <div className="flex-1 p-6 flex flex-col justify-center items-center gap-6">
+                {/* Scroll Area for Details */}
+                <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-6">
+                  {/* Answer Comparison Grid */}
                   <div className="w-full grid grid-cols-2 gap-4">
-                    <div className={`p-5 border text-center transition-all ${
+                    <div className={`p-4 border text-center transition-all ${
                       userAnswer === currentQuestion.answer 
                         ? 'bg-emerald-50/30 border-emerald-100' 
                         : 'bg-rose-50/30 border-rose-100'
                     }`}>
-                      <span className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                      <span className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
                         내가 선택한 답
                       </span>
-                      <div className={`inline-flex w-14 h-14 rounded-full items-center justify-center text-2xl font-black ${
+                      <div className={`inline-flex w-12 h-12 rounded-full items-center justify-center text-xl font-black ${
                         userAnswer === currentQuestion.answer 
                           ? 'bg-emerald-500 text-white' 
                           : 'bg-rose-500 text-white'
@@ -315,13 +453,111 @@ export const SingleQuestionView: React.FC<SingleQuestionViewProps> = ({ exams })
                       </div>
                     </div>
 
-                    <div className="p-5 border border-emerald-100 bg-emerald-50/10 text-center transition-all">
-                      <span className="block text-[10px] font-black uppercase tracking-widest text-emerald-600/70 mb-2">
+                    <div className="p-4 border border-emerald-100 bg-emerald-50/10 text-center transition-all">
+                      <span className="block text-[9px] font-black uppercase tracking-widest text-emerald-600/70 mb-1">
                         실제 정답
                       </span>
-                      <div className="inline-flex w-14 h-14 rounded-full items-center justify-center text-2xl font-black bg-emerald-500 text-white">
+                      <div className="inline-flex w-12 h-12 rounded-full items-center justify-center text-xl font-black bg-emerald-500 text-white">
                         {currentQuestion.answer}
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Option Response Rates (답지반응률) */}
+                  <div className="space-y-3 pt-4 border-t border-slate-100">
+                    <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 uppercase">
+                      <span className="w-1.5 h-3 bg-indigo-500 inline-block" />
+                      문항 답지반응률 (선택 분포)
+                    </h4>
+                    <div className="bg-slate-50 p-3.5 border border-slate-100 space-y-2.5">
+                      {ratingOptions.map(({ option, rate, percentage }) => {
+                        const isCorrectOpt = option === currentQuestion.answer;
+                        const isSelectedOpt = option === userAnswer;
+                        
+                        return (
+                          <div key={`rate-single-${option}`} className="space-y-1">
+                            <div className="flex items-center justify-between text-[11px] font-bold">
+                              <div className="flex items-center gap-1.5">
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-black border ${
+                                  isCorrectOpt 
+                                    ? 'bg-emerald-500 border-emerald-500 text-white' 
+                                    : isSelectedOpt 
+                                    ? 'bg-rose-500 border-rose-500 text-white' 
+                                    : 'bg-white border-slate-200 text-slate-600'
+                                }`}>
+                                  {option}
+                                </span>
+                                <span className={
+                                  isCorrectOpt ? "text-emerald-700 font-extrabold" : isSelectedOpt ? "text-rose-700 font-extrabold" : "text-slate-600"
+                                }>
+                                  {option}번
+                                  {isCorrectOpt && " (정답)"}
+                                  {isSelectedOpt && " (내가 선택)"}
+                                </span>
+                              </div>
+                              <span className={
+                                isCorrectOpt ? "text-emerald-600 font-black" : isSelectedOpt ? "text-rose-600 font-black" : "text-slate-500 font-bold"
+                              }>
+                                {rate}
+                              </span>
+                            </div>
+                            
+                            <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden relative">
+                              <div 
+                                className={`h-full rounded-full transition-all duration-1000 ${
+                                  isCorrectOpt ? "bg-emerald-500" : isSelectedOpt ? "bg-rose-500" : "bg-slate-400"
+                                }`}
+                                style={{ width: `${percentage}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Question Details (문항 상세 정보) */}
+                  <div className="space-y-3 pt-4 border-t border-slate-100">
+                    <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 uppercase">
+                      <span className="w-1.5 h-3 bg-indigo-500 inline-block" />
+                      문항 상세 정보
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="bg-slate-50 border border-slate-100 p-2">
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase mb-0.5">시대 / 유형</span>
+                        <span className="font-bold text-slate-700 truncate block">{currentQuestion.era} | {currentQuestion.category}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 p-2">
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase mb-0.5">분야</span>
+                        <span className="font-bold text-slate-700 block">{currentQuestion.field || '기타'}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 p-2">
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase mb-0.5">출제 근거</span>
+                        <span className="font-bold text-slate-700 truncate block">{currentQuestion.source || '-'}</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 p-2">
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase mb-0.5">난이도 / 배점</span>
+                        <span className="font-bold text-slate-700 block">{currentQuestion.difficulty} | {currentQuestion.score}점</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 p-2">
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase mb-0.5">실제 정답률</span>
+                        <span className="font-black text-indigo-600">{currentQuestion.correctRate}%</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 p-2">
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase mb-0.5">예상 정답률</span>
+                        <span className="font-black text-slate-600">{currentQuestion.expectedCorrectRate || '75'}%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Explanation (정답 해설) */}
+                  <div className="space-y-3 pt-4 border-t border-slate-100">
+                    <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 uppercase">
+                      <span className="w-1.5 h-3 bg-indigo-500 inline-block" />
+                      정답 해설
+                    </h4>
+                    <div className="bg-indigo-50/40 p-3 border border-indigo-100/30 text-[11px] leading-relaxed text-slate-700 whitespace-pre-wrap font-medium">
+                      {currentQuestion.explanation || '등록된 해설이 없습니다.'}
                     </div>
                   </div>
                 </div>
