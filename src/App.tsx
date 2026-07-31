@@ -107,6 +107,7 @@ export default function App() {
   const [downloadScope, setDownloadScope] = useState<'all' | 'general' | 'advanced'>('all');
   const [downloadQuestionsList, setDownloadQuestionsList] = useState<(Question & { checked: boolean })[]>([]);
   const [isFetchingDownloadList, setIsFetchingDownloadList] = useState(false);
+  const [localExposure, setLocalExposure] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bulkExcelInputRef = useRef<HTMLInputElement>(null);
   const qImageRef = useRef<HTMLInputElement>(null);
@@ -168,6 +169,38 @@ export default function App() {
       (!e.levels || e.levels.length === 0 || e.levels.includes('기본'))
     ).length;
   }, [exams]);
+
+  const finalExposedAdvancedCount = useMemo(() => {
+    return exams.filter(e => {
+      const key = `${e.id}-심화`;
+      const isExposed = localExposure[key] !== undefined
+        ? localExposure[key]
+        : (e.isVisibleAdvanced !== false && e.isVisible !== false);
+      return isExposed && (!e.levels || e.levels.length === 0 || e.levels.includes('심화'));
+    }).length;
+  }, [exams, localExposure]);
+
+  const finalExposedGeneralCount = useMemo(() => {
+    return exams.filter(e => {
+      const key = `${e.id}-기본`;
+      const isExposed = localExposure[key] !== undefined
+        ? localExposure[key]
+        : (e.isVisibleGeneral !== false && e.isVisible !== false);
+      return isExposed && (!e.levels || e.levels.length === 0 || e.levels.includes('기본'));
+    }).length;
+  }, [exams, localExposure]);
+
+  const changedCount = useMemo(() => {
+    return Object.keys(localExposure).filter(key => {
+      const [id, level] = key.split('-');
+      const exam = exams.find(e => e.id === id);
+      if (!exam) return false;
+      const dbVal = level === '심화'
+        ? (exam.isVisibleAdvanced !== false && exam.isVisible !== false)
+        : (exam.isVisibleGeneral !== false && exam.isVisible !== false);
+      return localExposure[key] !== dbVal;
+    }).length;
+  }, [exams, localExposure]);
 
   const currentExam = useMemo(() => {
     return exams.find(e => e.id === selectedExamId);
@@ -275,26 +308,88 @@ export default function App() {
     }
   };
 
-  const handleToggleVisibility = async (id: string, level: string, currentStatus: boolean) => {
+  const handleToggleLocalVisibility = (id: string, level: string, currentStatus: boolean) => {
+    const key = `${id}-${level}`;
+    setLocalExposure(prev => {
+      const nextVal = !currentStatus;
+      const exam = exams.find(e => e.id === id);
+      const originalVal = level === '심화'
+        ? (exam?.isVisibleAdvanced !== false && exam?.isVisible !== false)
+        : (exam?.isVisibleGeneral !== false && exam?.isVisible !== false);
+      
+      const updated = { ...prev };
+      if (nextVal === originalVal) {
+        delete updated[key];
+      } else {
+        updated[key] = nextVal;
+      }
+      return updated;
+    });
+  };
+
+  const handleRegisterExposure = async () => {
+    if (finalExposedAdvancedCount > 15) {
+      alert(`심화 급수는 최대 15회차까지만 노출할 수 있습니다. (현재 대기 포함 선택: ${finalExposedAdvancedCount}회차)\n일부 회차를 비노출로 변경한 뒤 다시 등록해주세요.`);
+      return;
+    }
+    if (finalExposedGeneralCount > 15) {
+      alert(`기본 급수는 최대 15회차까지만 노출할 수 있습니다. (현재 대기 포함 선택: ${finalExposedGeneralCount}회차)\n일부 회차를 비노출로 변경한 뒤 다시 등록해주세요.`);
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
     try {
-      const isExposing = !currentStatus;
-      if (isExposing) {
-        if (level === '심화' && exposedAdvancedCount >= 15) {
-          alert('심화 급수는 최대 15회차까지만 노출할 수 있습니다.\n기존 노출 중인 다른 회차를 비노출로 변경한 후 설정해주세요.');
-          return;
+      const keys = Object.keys(localExposure);
+      const changedKeys = keys.filter(key => {
+        const [id, level] = key.split('-');
+        const exam = exams.find(e => e.id === id);
+        if (!exam) return false;
+        const dbVal = level === '심화'
+          ? (exam.isVisibleAdvanced !== false && exam.isVisible !== false)
+          : (exam.isVisibleGeneral !== false && exam.isVisible !== false);
+        return localExposure[key] !== dbVal;
+      });
+
+      if (changedKeys.length === 0) {
+        setIsUploading(false);
+        alert('변경 사항이 없습니다.');
+        return;
+      }
+
+      const changesByExamId: Record<string, { isVisibleAdvanced?: boolean; isVisibleGeneral?: boolean }> = {};
+      
+      for (const key of changedKeys) {
+        const [id, level] = key.split('-');
+        const val = localExposure[key];
+        if (!changesByExamId[id]) {
+          changesByExamId[id] = {};
         }
-        if (level === '기본' && exposedGeneralCount >= 15) {
-          alert('기본 급수는 최대 15회차까지만 노출할 수 있습니다.\n기존 노출 중인 다른 회차를 비노출로 변경한 후 설정해주세요.');
-          return;
+        if (level === '심화') {
+          changesByExamId[id].isVisibleAdvanced = val;
+        } else {
+          changesByExamId[id].isVisibleGeneral = val;
         }
       }
 
-      const fieldToUpdate = level === '심화' ? 'isVisibleAdvanced' : 'isVisibleGeneral';
-      await updateDoc(doc(db, 'exams', id), {
-        [fieldToUpdate]: isExposing
-      });
-    } catch (error) {
-      handleFirestoreError(error, 'Toggle Visibility');
+      const examIdsToUpdate = Object.keys(changesByExamId);
+      let count = 0;
+      for (let i = 0; i < examIdsToUpdate.length; i++) {
+        const id = examIdsToUpdate[i];
+        const updates = changesByExamId[id];
+        await updateDoc(doc(db, 'exams', id), updates);
+        count++;
+        setUploadProgress(Math.round(((i + 1) / examIdsToUpdate.length) * 100));
+      }
+
+      setLocalExposure({});
+      alert(`노출 여부 등록 완료: 총 ${count}개 회차의 노출 여부가 성공적으로 데이터베이스에 등록되었습니다.`);
+    } catch (error: any) {
+      handleFirestoreError(error, 'Register Exposure');
+      alert(`노출 여부 등록 중 오류가 발생했습니다: ${error.message || '알 수 없는 오류'}`);
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -1572,7 +1667,7 @@ export default function App() {
               </p>
               <Button 
                 onClick={() => window.location.reload()}
-                className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-black rounded-none shadow-[5px_5px_0_rgba(0,0,0,0.2)]"
+                className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-black rounded-none shadow-[5px_5px_0_rgba(0,0,0,1)]"
               >
                 페이지 새로고침
               </Button>
@@ -1706,7 +1801,7 @@ export default function App() {
                 </h1>
                 <div className="flex items-center gap-2 text-[10px] text-white/50 font-bold uppercase tracking-widest mt-0.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-[#D4AF37]" />
-                  {activeMenu === 'management' ? '한국사능력검정시험 기출문제 데이터베이스 관리' : activeMenu === 'rounds' ? '회차별 기출문제 등록 현황 및 통합 관리' : activeMenu === 'stats' ? '회차별 응시 결과 및 문항 난이도 분석' : activeMenu === 'user' ? '사용자가 직접 문제를 풀고 학습하는 인터페이스' : '단일 문항을 선택하여 집중 학습하는 인터페이스'}
+                  {activeMenu === 'rounds' ? '회차별 기출문제 등록 현황 및 통합 관리' : activeMenu === 'stats' ? '회차별 응시 결과 및 문항 난이도 분석' : activeMenu === 'user' ? '사용자가 직접 문제를 풀고 학습하는 인터페이스' : '단일 문항을 선택하여 집중 학습하는 인터페이스'}
                 </div>
               </div>
             </div>
@@ -1717,6 +1812,69 @@ export default function App() {
           </div>
         </header>
 
+      {/* Upload Progress Overlay */}
+      <AnimatePresence>
+        {isUploading && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          >
+            <div className="bg-white p-8 rounded-none border-2 border-[#141414] shadow-[10px_10px_0_rgba(0,0,0,1)] w-[400px]">
+              <div className="text-center mb-6">
+                <div className="text-lg font-bold mb-2">엑셀파일 업로드 중입니다.</div>
+                <div className="text-sm text-slate-500 font-mono">진행률: {uploadProgress}%</div>
+              </div>
+              
+              <div className="h-4 w-full bg-[#EEE] border border-[#141414] rounded-none overflow-hidden relative">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${uploadProgress}%` }}
+                  className="h-full bg-[#D4AF37]"
+                />
+              </div>
+              
+              <div className="mt-4 text-[11px] text-center text-slate-400 italic">
+                데이터를 처리하고 있습니다. 잠시만 기다려 주세요.
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PDF Generation Progress Overlay */}
+      <AnimatePresence>
+        {isGeneratingPDF && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          >
+            <div className="bg-white p-8 rounded-none border-2 border-[#141414] shadow-[10px_10px_0_rgba(0,0,0,1)] w-[400px]">
+              <div className="text-center mb-6">
+                <div className="text-lg font-bold mb-2 text-[#141414]">PDF 리포트 생성 중입니다</div>
+                <div className="text-xs font-bold text-slate-500 mb-1">{pdfProgressText}</div>
+                <div className="text-sm font-black text-indigo-600 font-mono">진행률: {pdfProgressPercent}%</div>
+              </div>
+              
+              <div className="h-4 w-full bg-[#EEE] border border-[#141414] rounded-none overflow-hidden relative">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${pdfProgressPercent}%` }}
+                  className="h-full bg-indigo-600"
+                />
+              </div>
+              
+              <div className="mt-4 text-[11px] text-center text-slate-400 italic font-semibold">
+                고품질 PDF 문서 및 레이아웃을 생성하고 있습니다.<br />잠시만 기다려 주세요.
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
         <div className="flex-1 flex flex-col px-4 pt-2 pb-2 gap-3 overflow-y-auto shadow-inner font-sans">
           {activeMenu === 'rounds' ? (
             <div className="flex-1 flex flex-col gap-4">
@@ -1726,13 +1884,45 @@ export default function App() {
                   <Button onClick={() => setIsCreateModalOpen(true)} className="h-9 rounded-none bg-[#141414] hover:bg-black text-white text-xs font-bold gap-1.5 flex items-center">
                     <Plus className="w-3.5 h-3.5" /> 회차 추가
                   </Button>
+                  <Button 
+                    onClick={handleRegisterExposure} 
+                    disabled={changedCount === 0}
+                    className={cn(
+                      "h-9 rounded-none text-xs font-bold gap-1.5 flex items-center border transition-all",
+                      changedCount > 0 
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 shadow-[2px_2px_0_rgba(0,0,0,1)] hover:shadow-none" 
+                        : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                    )}
+                  >
+                    <Check className="w-3.5 h-3.5" /> 
+                    <span>최종 노출 등록 {changedCount > 0 && `(${changedCount})`}</span>
+                  </Button>
+                  {changedCount > 0 && (
+                    <Button 
+                      variant="outline"
+                      onClick={() => setLocalExposure({})}
+                      className="h-9 rounded-none text-xs font-bold border-red-200 text-red-500 hover:bg-red-50"
+                    >
+                      변경 취소 (초기화)
+                    </Button>
+                  )}
                 </div>
                 <div className="flex items-center gap-3 text-xs">
-                  <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold rounded-sm">
-                    심화 노출: {exposedAdvancedCount} / 15회차
+                  <span className={cn(
+                    "px-2.5 py-1 font-bold rounded-sm border transition-all",
+                    finalExposedAdvancedCount !== exposedAdvancedCount 
+                      ? "bg-indigo-100 text-indigo-800 border-indigo-300 animate-pulse font-extrabold" 
+                      : "bg-indigo-50 text-indigo-700 border-indigo-100"
+                  )}>
+                    심화 노출: {exposedAdvancedCount}회차 {finalExposedAdvancedCount !== exposedAdvancedCount && `➔ ${finalExposedAdvancedCount}회차`} (최대 15)
                   </span>
-                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-100 font-bold rounded-sm">
-                    기본 노출: {exposedGeneralCount} / 15회차
+                  <span className={cn(
+                    "px-2.5 py-1 font-bold rounded-sm border transition-all",
+                    finalExposedGeneralCount !== exposedGeneralCount 
+                      ? "bg-emerald-100 text-emerald-800 border-emerald-300 animate-pulse font-extrabold" 
+                      : "bg-emerald-50 text-emerald-700 border-emerald-100"
+                  )}>
+                    기본 노출: {exposedGeneralCount}회차 {finalExposedGeneralCount !== exposedGeneralCount && `➔ ${finalExposedGeneralCount}회차`} (최대 15)
                   </span>
                 </div>
               </div>
@@ -1757,9 +1947,12 @@ export default function App() {
                       const displayLevels = (!exam.levels || exam.levels.length === 0) ? ['심화', '기본'] : exam.levels;
                       return displayLevels.map(level => ({ ...exam, displayLevel: level }));
                     }).map((examWithLevel, index, allRows) => {
-                      const isLevelVisible = examWithLevel.displayLevel === '심화'
+                      const key = `${examWithLevel.id}-${examWithLevel.displayLevel}`;
+                      const dbVal = examWithLevel.displayLevel === '심화'
                         ? (examWithLevel.isVisibleAdvanced !== false && examWithLevel.isVisible !== false)
                         : (examWithLevel.isVisibleGeneral !== false && examWithLevel.isVisible !== false);
+                      const isLevelVisible = localExposure[key] !== undefined ? localExposure[key] : dbVal;
+                      const isChanged = localExposure[key] !== undefined && localExposure[key] !== dbVal;
 
                       return (
                         <div 
@@ -1769,7 +1962,7 @@ export default function App() {
                           <div className="col-span-1 p-3 text-center font-mono text-[11px] text-slate-400 border-r border-[#F0F0F0]">{String(allRows.length - index).padStart(2, '0')}</div>
                           <div className="col-span-4 p-3 flex items-center gap-2 border-r border-[#F0F0F0]">
                              <span className={`font-bold truncate text-[14px] ${isLevelVisible ? 'text-[#141414]' : 'text-slate-400'}`}>
-                              {examWithLevel.round} 한국사능력검정시험
+                               {examWithLevel.round} 한국사능력검정시험
                              </span>
                              {index < 3 && isLevelVisible && (
                                <span className="text-[9px] bg-yellow-400 text-black px-1 font-black uppercase rounded-xs">최신</span>
@@ -1787,11 +1980,11 @@ export default function App() {
                           <div className="col-span-1.5 p-3 text-center text-slate-500 font-mono text-[14px]">
                             {examWithLevel.createdAt ? new Date(examWithLevel.createdAt.seconds * 1000).toLocaleDateString('ko-KR') : '2026.04.19'}
                           </div>
-                          <div className="col-span-1.5 p-3 flex justify-center">
+                          <div className="col-span-1.5 p-3 flex justify-center items-center gap-1.5">
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              onClick={() => handleToggleVisibility(examWithLevel.id, examWithLevel.displayLevel, isLevelVisible)}
+                              onClick={() => handleToggleLocalVisibility(examWithLevel.id, examWithLevel.displayLevel, isLevelVisible)}
                               className={`h-7 rounded-none px-2 text-[10px] font-bold gap-1 ${
                                 isLevelVisible 
                                 ? 'text-emerald-600' 
@@ -1804,6 +1997,11 @@ export default function App() {
                                 <><EyeOff className="w-3 h-3" /> 비노출</>
                               )}
                             </Button>
+                            {isChanged && (
+                              <span className="text-[8px] bg-amber-100 text-amber-800 px-1 py-0.5 font-bold rounded-xs border border-amber-200">
+                                대기
+                              </span>
+                            )}
                           </div>
                         <div className="col-span-2 p-3 flex justify-center items-center gap-1">
                           <Button 
@@ -2031,14 +2229,6 @@ export default function App() {
                       onClick={() => setIsPreviewDialogOpen(true)}
                     >
                       미리보기
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="h-8 rounded-none border-[#141414] text-[12px] font-bold bg-slate-800 text-white hover:bg-slate-700 px-3"
-                      onClick={handleTempSave}
-                    >
-                      임시 저장
                     </Button>
                   </div>
 
