@@ -41,6 +41,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileSpreadsheet,
+  FileText,
   X,
   Loader2,
   Image as ImageIcon,
@@ -48,6 +49,8 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import { 
   Dialog,
   DialogContent,
@@ -119,6 +122,7 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
   const [isQuestionDialogOpen, setIsQuestionDialogOpen] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloadingPDF, setIsDownloadingPDF] = useState(false);
   const [selectedLevel, setSelectedLevel] = useState<'advanced' | 'basic'>('advanced');
 
   const currentExam = useMemo(() => {
@@ -277,6 +281,134 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
       alert('엑셀 파일 생성 중 오류가 발생했습니다.');
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    if (displayQuestions.length === 0) {
+      alert('다운로드할 데이터가 없습니다.');
+      return;
+    }
+    setIsDownloadingPDF(true);
+
+    try {
+      const reportContainer = document.createElement('div');
+      reportContainer.style.position = 'absolute';
+      reportContainer.style.left = '-9999px';
+      reportContainer.style.top = '-9999px';
+      reportContainer.style.width = '1000px';
+      reportContainer.style.backgroundColor = '#ffffff';
+      reportContainer.style.padding = '40px';
+      reportContainer.style.fontFamily = 'Apple SD Gothic Neo, Malgun Gothic, sans-serif';
+      reportContainer.style.color = '#1e293b';
+
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      const timeStr = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+
+      reportContainer.innerHTML = `
+        <div style="margin-bottom: 24px; border-bottom: 2px solid #1e293b; padding-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+            <div>
+              <span style="font-size: 11px; font-weight: 800; color: #4f46e5; text-transform: uppercase; letter-spacing: 1px;">한국사능력검정시험 분석 시스템</span>
+              <h1 style="font-size: 22px; font-weight: 900; margin: 4px 0 0 0; color: #0f172a; tracking: -0.5px;">문항 정보 상세 분석 리포트</h1>
+            </div>
+            <div style="text-align: right; font-size: 10px; color: #64748b; line-height: 1.5;">
+              <div>출력일시: ${dateStr} ${timeStr}</div>
+              <div>총 문항 수: <strong style="color: #4f46e5;">${displayQuestions.length}건</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: center; border: 1px solid #cbd5e1;">
+          <thead>
+            <tr style="background-color: #f8fafc; border-bottom: 2px solid #cbd5e1;">
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 45px; font-weight: 800; color: #475569;">회차</th>
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 45px; font-weight: 800; color: #475569;">번호</th>
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 50px; font-weight: 800; color: #475569;">급수</th>
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 60px; font-weight: 800; color: #475569;">시대</th>
+              <th style="padding: 10px 10px; border-right: 1px solid #e2e8f0; text-align: left; font-weight: 800; color: #475569;">문항 제목</th>
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 75px; font-weight: 800; color: #64748b;">예상 정답률</th>
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 75px; font-weight: 800; color: #4f46e5;">실제 정답률</th>
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 70px; font-weight: 800; color: #475569;">평정 간극</th>
+              <th style="padding: 10px 8px; border-right: 1px solid #e2e8f0; width: 140px; font-weight: 800; color: #475569;">유형</th>
+              <th style="padding: 10px 6px; border-right: 1px solid #e2e8f0; width: 50px; font-weight: 800; color: #475569;">난이도</th>
+              <th style="padding: 10px 6px; width: 45px; font-weight: 800; color: #475569;">배점</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${displayQuestions.map((q, idx) => {
+              const expected = 75 + (q.number % 10) - (q.difficulty === '상' ? 15 : q.difficulty === '하' ? -10 : 0);
+              const gap = q.correctRate - expected;
+              const qExam = exams.find(e => e.id === q.examId);
+              const round = qExam ? qExam.round.replace(/[^0-9]/g, '') : '-';
+              const bgColor = idx % 2 === 1 ? '#f8fafc' : '#ffffff';
+              const gapColor = gap > 0 ? '#10b981' : gap < 0 ? '#f43f5e' : '#94a3b8';
+              const diffBg = q.difficulty === '상' ? '#fef2f2' : q.difficulty === '중' ? '#fffbeb' : '#eff6ff';
+              const diffColor = q.difficulty === '상' ? '#ef4444' : q.difficulty === '중' ? '#f59e0b' : '#3b82f6';
+
+              return `
+                <tr style="background-color: ${bgColor}; border-bottom: 1px solid #e2e8f0;">
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0; font-weight: 700; color: #64748b;">${round}</td>
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0; font-family: monospace; color: #94a3b8;">${String(q.number).padStart(2, '0')}</td>
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0; font-weight: 800; color: ${q.type === 'advanced' ? '#4f46e5' : '#10b981'};">${q.type === 'advanced' ? '심화' : '기본'}</td>
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0; font-weight: 600; color: #475569;">${q.era}</td>
+                  <td style="padding: 8px 10px; border-right: 1px solid #e2e8f0; text-align: left; font-weight: 600; color: #1e293b;">${q.title}</td>
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0; font-weight: 700; color: #94a3b8;">${expected}%</td>
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0; font-weight: 800; color: #4f46e5;">${q.correctRate}%</td>
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0; font-weight: 800; color: ${gapColor};">${gap > 0 ? '+' : ''}${gap}%</td>
+                  <td style="padding: 8px 8px; border-right: 1px solid #e2e8f0; font-size: 10px; color: #64748b;">${q.category}</td>
+                  <td style="padding: 8px 6px; border-right: 1px solid #e2e8f0;"><span style="background-color: ${diffBg}; color: ${diffColor}; padding: 2px 6px; font-weight: 800; font-size: 10px;">${q.difficulty}</span></td>
+                  <td style="padding: 8px 6px; font-weight: 700; color: #475569;">${q.score}점</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+
+        <div style="margin-top: 20px; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+          <div>한국사능력검정시험 성적 및 문항 통계 상세 분석 보고서</div>
+          <div>생성 시각: ${dateStr} ${timeStr}</div>
+        </div>
+      `;
+
+      document.body.appendChild(reportContainer);
+
+      const canvas = await html2canvas(reportContainer, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff'
+      });
+
+      document.body.removeChild(reportContainer);
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position -= pageHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pageHeight;
+      }
+
+      const date = new Date().toISOString().split('T')[0];
+      pdf.save(`한능검_문항통계_리포트_${date}.pdf`);
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      alert('PDF 파일 생성 중 오류가 발생했습니다.');
+    } finally {
+      setIsDownloadingPDF(false);
     }
   };
 
@@ -1047,13 +1179,13 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                       <BookOpen className="w-3.5 h-3.5 text-blue-500" />
                       문항 정보 상세 조회 ({filteredQuestions.length}건)
                     </CardTitle>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
                       <Button 
                         size="sm" 
                         variant="outline" 
                         onClick={handleDownloadExcel}
-                        disabled={isDownloading}
-                        className="h-7 text-[10px] font-bold border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 flex items-center gap-1.5 min-w-[100px]"
+                        disabled={isDownloading || isDownloadingPDF}
+                        className="h-7 text-[10px] font-bold border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 flex items-center gap-1.5"
                       >
                         {isDownloading ? (
                           <>
@@ -1067,7 +1199,26 @@ export const StatsPage: React.FC<StatsPageProps> = ({ exams, selectedExamId, que
                           </>
                         )}
                       </Button>
-                      <div className="text-[10px] text-slate-400 font-mono tracking-tighter italic">
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={handleDownloadPDF}
+                        disabled={isDownloading || isDownloadingPDF}
+                        className="h-7 text-[10px] font-bold border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 flex items-center gap-1.5"
+                      >
+                        {isDownloadingPDF ? (
+                          <>
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            PDF 생성 중...
+                          </>
+                        ) : (
+                          <>
+                            <FileText className="w-3 h-3" />
+                            PDF 다운로드
+                          </>
+                        )}
+                      </Button>
+                      <div className="text-[10px] text-slate-400 font-mono tracking-tighter italic ml-2">
                         * 검색 결과가 아래에 표시됩니다.
                       </div>
                       <Button 
