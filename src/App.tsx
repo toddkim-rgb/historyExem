@@ -2251,7 +2251,7 @@ export default function App() {
 
                   <Button 
                     size="sm" 
-                    className="h-8 rounded-none bg-[#141414] text-white text-[10px] font-bold px-4 hover:bg-slate-800"
+                    className="h-8 rounded-none bg-[#141414] hover:bg-black text-white text-[11px] font-bold px-4 flex items-center gap-1.5 transition-colors"
                     onClick={async () => {
                       if (selectedExamId) {
                         try {
@@ -2259,20 +2259,21 @@ export default function App() {
                             status: 'published',
                             updatedAt: serverTimestamp()
                           });
-                          handleTempSave();
+                          alert("기출문제회차가 성공적으로 등록되었습니다.");
                           setTimeout(() => {
                             setActiveMenu('rounds');
-                          }, 1000);
+                          }, 500);
                         } catch (error) {
-                          console.error("Error publishing exam:", error);
-                          alert("게시 중 오류가 발생했습니다.");
+                          console.error("Error registering exam round:", error);
+                          alert("등록 중 오류가 발생했습니다.");
                         }
                       } else {
                         alert("회차를 선택해주세요.");
                       }
                     }}
                   >
-                    기출문제 게시
+                    <Check className="w-3.5 h-3.5" />
+                    기출문제회차 등록
                   </Button>
                 </div>
               </Tabs>
